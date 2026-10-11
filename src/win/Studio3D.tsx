@@ -494,7 +494,7 @@ export default function Studio3D() {
     el.addEventListener('pointerdown', down);
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
-
+    el.addEventListener('pointercancel', cancelled);
     el.parentElement?.addEventListener('wheel', wheel, { passive: false, capture: true });
     window.addEventListener('keydown', key, true); // capture: 3D undo/redo must not reach the 2D shortcut handler
     window.addEventListener('keyup', keyUp);
