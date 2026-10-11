@@ -1,5 +1,6 @@
 // Built-in automated acceptance tests (Help → Run Diagnostics).
-import { DocEngine } from './document';
+import { DocEngine, Recorder } from './document';
+import { appendRecordedSample } from './recording';
 import { ReplayPlayer } from './replay';
 import { buildPresets, brushFingerprint, exportBrushes, parseBrushImport, searchBrushes } from './brushes';
 import { renderStroke, sampleCurve, StrokeRenderer, SAMPLE_STRIDE } from './strokeRenderer';
@@ -78,6 +79,18 @@ export async function runDiagnostics(onProgress?: (r: TestResult[]) => void): Pr
     await wait();
   };
   const assert = (c: unknown, msg: string) => { if (!c) throw new Error(msg); };
+
+  await test('Drawing Replay preserves real pauses and terminal pointer data', () => {
+    const clock = new Recorder();
+    clock.time = 25;
+    clock.lastWall = 0;
+    clock.idleCap = Number.MAX_SAFE_INTEGER;
+    assert(clock.clockAt(15_000) === 15_025, 'default replay clock shortened a real pause');
+    const samples = [10, 20, 0.7, 0, 0, 12];
+    appendRecordedSample(samples, [14, 26, 0, 8, -4, 8], true);
+    assert(JSON.stringify(samples.slice(-6)) === JSON.stringify([14, 26, 0.7, 8, -4, 12]), 'terminal sample lost endpoint, timing or pen pressure');
+    return 'long pause and pen-up endpoint retained';
+  });
 
   await test('View transform keeps document coordinates (zoom/pan/rotate/flip)', () => {
     let worst = 0;

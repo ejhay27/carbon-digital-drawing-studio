@@ -2,7 +2,7 @@
 
 A professional, local-first creative studio for drawing, painting, illustration, spatial (3D) drawing and comics: a canvas-first, customizable workspace with an extensive brush engine, editable Crisp Ink paths, a complete Drawing Replay system, the White-Ground 3D Studio, Comic Studio and a local brush library. It works fully offline, needs no account and sends no telemetry. Release line: 7.x+ls (see [PRIME-7.md](./PRIME-7.md)).
 
-> **Documentation scope:** This engine deep-dive began as Carbon 1.0 documentation and preserves some historical platform, limitation and roadmap notes below. Those notes are not current Carbon: Prime 7.5.1+ls status. The current source-candidate audit and platform boundaries are in [`AUDIT-CURRENT-7.1.1+ls.md`](./AUDIT-CURRENT-7.1.1+ls.md), [`WINDOWS.md`](./WINDOWS.md) and [`ANDROID.md`](./ANDROID.md). The 3D workspace discussed as future work in §9 now exists as 3D Studio.
+> **Documentation scope:** This engine deep-dive began as Carbon 1.0 documentation and preserves some historical platform, limitation and roadmap notes below. Those notes are not current Carbon: Prime 7.6.0+ls status. The current source-candidate audit and platform boundaries are in [`AUDIT-7.6.0-candidate.md`](./AUDIT-7.6.0-candidate.md), [`WINDOWS.md`](./WINDOWS.md) and [`ANDROID.md`](./ANDROID.md). The 3D workspace discussed as future work in §9 now exists as 3D Studio.
 
 ---
 
@@ -73,12 +73,12 @@ Each stroke is stored as control points `(x, y, pressure)` plus `size`, `opacity
 
 ## 5. Drawing Replay
 
-* **Recording:** an ordered event log per document. Events are `{t, c}` (command with full input samples `x, y, pressure, tiltX, tiltY, t` and complete brush parameters plus RNG seed), `{t, u}` (undo/redo), `{t, m}` (tool, brush or colour markers) and `{t, cp}` (checkpoint). Idle gaps are compressed (configurable).
+* **Recording:** an ordered event log per document. Events are `{t, c}` (command with full input samples `x, y, pressure, tiltX, tiltY, t` and complete brush parameters plus RNG seed), `{t, u}` (undo/redo), `{t, m}` (tool, brush or colour markers) and `{t, cp}` (checkpoint). Real idle gaps are preserved by default; optional pause shortening is off unless enabled in Preferences.
 * **Checkpoints** are written when recording starts or resumes, and whenever an undo reaches history from before a gap (epoch logic). Reconstruction therefore never depends on unrecorded state.
 * **Playback** rebuilds the document in an isolated `DocEngine`. In-progress strokes are rendered progressively from their samples at the recorded pace, so playback never just shows the finished image. Transport: play, pause/resume, restart, jump to start/end, previous/next event, timeline scrubbing with markers, speed presets from 0.25× to 32× or a custom speed, and *Return to artwork*.
 * **Seeking** uses in-memory engine checkpoints that clone layers and undo stacks with consistent canvas identity.
-* **Video export:** WebM via MediaRecorder, rendered from an isolated player.
-* **Storage:** per-document limit (default 250 MB estimate). When it is reached, recording pauses and you are notified. The REC indicator appears in the tab, the status bar and the panel. Everything stays local.
+* **Video export:** MediaRecorder renders from an isolated player and selects only a codec the platform reports as supported. The returned WebM or MP4 type controls the file extension; no format is transcoded or relabelled. Video export remains dependent on browser/WebView encoder support.
+* **Storage:** per-document retained-memory estimate limit (default 250 MB). Checkpoints account for raw canvas clones and stroke samples are estimated conservatively. When the limit is reached, recording pauses and you are notified. The REC indicator appears in the tab, status bar and panel. Autosave keeps a local recovery copy after committed edits; all replay data stays with its project.
 * **Known limitation:** smudge brushes ignore symmetry mirrors. Replay matches the live document within the 2-unit colour tolerance used by the tests; PNG round-trips of semi-transparent pixels can differ by ±1 because of premultiplied alpha.
 
 ## 6. `.carbon` v1 file format

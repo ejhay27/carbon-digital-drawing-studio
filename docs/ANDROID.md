@@ -1,6 +1,6 @@
 # CARBON for Android (APK)
 
-The Android build path targets the shared Carbon studio inside a native Capacitor 8 shell and keeps its separate **CARBON 1.0.0** identity. The current shared-source candidate is Carbon: Prime 7.5.1+ls; Android's own versionName/versionCode and app identity remain unchanged. Browser-local brush storage and camera scanning have not been accepted in Android's WebView, and no Android-specific camera/file workflow is claimed by the QR implementation. This checkout contains the Capacitor configuration and `scripts/android.mjs`; the generated `android/` Gradle project is created by that script and is not checked in here. The Android integration, APK and physical-device behavior have **not** been tested in this audit; the table below records implemented source paths, not device acceptance.
+The Android build path targets the shared Carbon studio inside a native Capacitor 8 shell and keeps its separate **CARBON 1.0.0** identity. The current shared-source candidate is Carbon: Prime 7.6.0+ls; Android's own versionName/versionCode and app identity remain unchanged. Browser-local brush storage and QR image picking/decoding have not been accepted in Android's WebView. QR import scans a user-selected image and does not request camera access; Android picker behavior remains unverified. This checkout contains the Capacitor configuration and `scripts/android.mjs`; the generated `android/` Gradle project is created by that script and is not checked in here. The Android integration, APK and physical-device behavior have **not** been tested in this audit; the table below records implemented source paths, not device acceptance.
 
 ## What is Android-specific
 
@@ -66,5 +66,5 @@ Enable *Install unknown apps* for your browser or file manager, open the APK, or
 * Not yet verified on physical hardware in this milestone. Stylus pressure, tilt and palm rejection depend on the device's WebView and OEM pen driver.
 * On Android 11 and later, CARBON can only *list* files it created itself (scoped storage). Use *Open* for other files. Files survive uninstall only in Documents/CARBON, not in the app-storage fallback.
 * Opening `.carbon` files directly from other apps (intent filters / "Open with CARBON") is not implemented yet. Use *Open* or the CARBON folder list.
-* Replay video export uses the WebView's MediaRecorder (WebM). Some older WebViews do not support it, and CARBON shows an error in that case.
+* Replay video export uses only a WebView MediaRecorder codec it reports as supported; CARBON writes the returned WebM or MP4 type with the matching extension and does not transcode or relabel. Encoder support varies by WebView/device and remains unverified on physical Android hardware.
 * Not yet packaged as an AAB for Google Play. `./gradlew bundleRelease` in `android/` produces one, but Play signing setup is out of scope.

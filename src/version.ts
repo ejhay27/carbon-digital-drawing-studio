@@ -1,6 +1,6 @@
 // CARBON: PRIME version: single source of truth for the Windows/desktop edition.
 //
-// Release identity:  MAJOR.MINOR.PATCH+ls   (e.g. 7.1.0+ls)
+// Release identity:  MAJOR.MINOR.PATCH+ls   (e.g. 7.6.0+ls)
 //   - WINDOWS_VERSION is bare semantic versioning; it drives ordering, packaging and the
 //     diagnostics rules.
 //   - LS_SUFFIX ("+ls", Local Storage) is appended wherever a display string or metadata
@@ -17,12 +17,12 @@
 // intentionally NOT driven from here, and its displayed labels are kept exactly as they were.
 import { EDITION } from './platform/edition';
 
-export const WINDOWS_VERSION = '7.5.1';
+export const WINDOWS_VERSION = '7.6.0';
 
 /** Local-Storage release suffix ("ls" = Local Storage). Shown wherever the format allows. */
 export const LS_SUFFIX = '+ls';
 
-/** Full display version of the running edition, e.g. "7.1.1+ls". Android keeps its own line. */
+/** Full display version of the running edition, e.g. "7.6.0+ls". Android keeps its own line. */
 export const APP_VERSION = EDITION.windows ? WINDOWS_VERSION + LS_SUFFIX : '1.0.0';
 
 /** Human-readable label used in About and in saved-file metadata. Android keeps its legacy label unchanged. */

@@ -43,6 +43,7 @@ export default function MenuBar() {
     File: [
       { label: 'New Canvas…', action: () => runAction('file.new'), sc: sc('file.new') },
       { label: 'Open…', action: () => runAction('file.open'), sc: sc('file.open') },
+      { label: 'My Illustrations…', action: () => setApp({ dialog: 'projects' }) },
       'sep',
       { label: 'Open Recent', header: true },
       ...(recent.length ? recent.slice(0, 8).map((r) => ({ label: '   ' + r.name, action: () => openRecent(r.key) })) : [{ label: '   (no recent documents)', disabled: true }]),

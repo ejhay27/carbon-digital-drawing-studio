@@ -2,15 +2,17 @@
 //
 // Maintenance rules
 //  • Newest release first. The first entry MUST equal WINDOWS_VERSION in src/version.ts (checked by diagnostics).
-//  • List only what actually shipped in that build. Do not add future/planned versions here.
-//  • `date` is an ISO date (YYYY-MM-DD) set when the build is published. Leave it null if the date was not
-//    recorded; the UI then says "Release date not recorded" instead of inventing one.
+//  • Include shipped notes or explicitly identified local source candidates; never present planned work as shipped.
+//  • `status: 'candidate'` labels unpublished local source builds. For a published build, `date` is an ISO
+//    date (YYYY-MM-DD); leave it null if unrecorded so the UI does not invent a release date.
 //  • category: 'major' (MAJOR bump), 'feature' (MINOR bump), 'patch' (PATCH bump).
 
 export type ReleaseCategory = 'major' | 'feature' | 'patch';
 
 export interface Release {
   version: string;
+  /** Explicitly marks a local/unpublished source candidate in the UI. */
+  status?: 'candidate';
   /** Optional display suffix for this release identity, e.g. '+ls' (Local Storage). */
   suffix?: string;
   title: string;
@@ -26,7 +28,44 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: '7.6.0',
+    status: 'candidate',
+    suffix: '+ls',
+    title: 'Drawing Replay that keeps its timing',
+    date: null,
+    category: 'feature',
+    summary: 'Local Carbon: Prime 7.6.0+ls source candidate: preserve real pauses by default, capture terminal stroke input, improve local recovery, and expose recording controls from My Illustrations. This candidate is not published; platform acceptance is still pending.',
+    features: [
+      'Drawing Replay keeps the real time between recorded edits by default; optional pause shortening is an explicit preference. It stores document events and stroke samples, never idle frames, cursor/hand movement, menus, screen, microphone or camera.',
+      'When enabled, recording starts for new drawings and projects opened without existing replay history. Completed edits schedule a local IndexedDB recovery save after a short quiet period, alongside the periodic and app-lifecycle sweeps.',
+      'My Illustrations is available on Home and from File → My Illustrations while editing; browser-local recents and Android device files remain distinct. Project cards open playback and recording controls, and replay history can be deleted separately from artwork.',
+      'Replay controls explicitly start, pause, resume or stop capture without deleting history; deleting replay data is a separately confirmed action that leaves artwork intact.',
+      'Native .carbon saves/copies retain editable artwork and its event replay. Artwork image export remains flattened PNG, JPEG or WebP; replay video uses a platform-supported MediaRecorder WebM or MP4 type with the matching extension.',
+    ],
+    improvements: [
+      'Pointer-up and pointer-cancel paths keep the terminal position of raster and Crisp Ink strokes; pressure is not forced to zero at stylus release and sample times remain monotonic.',
+      'Replay memory estimates now include full checkpoint canvas clones and conservative stroke-sample overhead, with settings/status describing the estimate rather than archive size.',
+      'Session autosave records the revision it serialized and queues another pass if a document changes while it is being encoded.',
+    ],
+    fixes: [
+      'Projects opened without replay history can now begin local recording when the preference is enabled; saved recordings are not duplicated by project save/export.',
+      'Video output type and filename are derived from the encoder output instead of treating WebM as MP4 or promising an unsupported codec.',
+    ],
+    compatibility: [
+      'Carbon: Prime remains on the 7.x+ls line. Android keeps its separate CARBON 1.0.0 identity and build numbering.',
+      'No .carbon archive version or dependency version changed. Existing replay logs remain readable; time already shortened in older recordings cannot be recovered.',
+      'No account, cloud upload, screen recording, AI drawing, generative fill, animation timeline or Carbon: Flux integration is added.',
+    ],
+    knownIssues: [
+      'This is an unpublished source candidate. Node tests and the web build pass, but browser interaction, Windows runtime/installer, Android APK/device, QR image decode and video encoder acceptance are not complete.',
+      'Drawing Replay covers the 2D document event engine; 3D Studio and Orbit Board edits are not part of this replay timeline.',
+      'MP4 is available only where MediaRecorder reports and returns MP4; otherwise only supported WebM is offered or video export fails. The app does not transcode.',
+      'Browser-local recent projects are not a full Windows filesystem scan. Android can list only the CARBON folder it can access; use Open for other device locations.',
+    ],
+  },
+  {
     version: '7.5.1',
+    status: 'candidate',
     suffix: '+ls',
     title: 'Brush assets and local creation tools',
     date: null,
@@ -35,7 +74,8 @@ export const RELEASES: Release[] = [
     features: [
       'Brush Marketplace keeps its bundled catalog available offline and reports when no optional remote catalog is configured; it does not invent online downloads, ratings or popularity.',
       'Brush Lab and Custom Eraser Studio edit an isolated draft through the real brush engine preview, then save custom brush presets and eraser tips separately in local app state.',
-      'Brush QR sharing generates a compact PNG or text payload for a validated single brush; image-file decode and explicit camera-scan flows are available in the UI. Arbitrary URLs are rejected and larger/stamped brushes use .carbonpack files.',
+      'Brush QR sharing generates a compact PNG or text payload for a validated single brush; import scans a user-selected QR image locally without camera access, then selects the first imported brush for use. Arbitrary URLs are rejected and larger/stamped brushes use .carbonpack files.',
+      'The Brush Library has an Imported Brushes section for standalone imports and pack-sourced brushes; a per-brush export-and-remove action preserves other pack contents and remaining IDs.'
     ],
     improvements: [
       'Validated brush pack bytes and metadata use a shared local asset store with download/install limits, storage estimates and separate input versus installed-size reporting.',
@@ -52,12 +92,13 @@ export const RELEASES: Release[] = [
       'No account, cloud sync, telemetry, AI drawing or animation timeline is added. Remote marketplace hosting is optional and is not configured in this repository.',
     ],
     knownIssues: [
-      'This source candidate has code-level tests only. QR camera decoding, custom brush save/use flows and the UI have not received end-to-end browser or platform acceptance.',
+      'This source candidate has code-level tests only. QR image decoding, custom brush save/use flows and the UI have not received end-to-end browser or platform acceptance.',
       'Custom brush and eraser definitions remain in local app preferences; the unified asset manager and project illustration browser are still future work.',
     ],
   },
   {
     version: '7.1.1',
+    status: 'candidate',
     suffix: '+ls',
     title: 'Project overview and attribution',
     date: null,
@@ -77,6 +118,7 @@ export const RELEASES: Release[] = [
   },
   {
     version: '7.1.0',
+    status: 'candidate',
     suffix: '+ls',
     title: 'A more discoverable Carbon',
     date: null,
@@ -109,6 +151,7 @@ export const RELEASES: Release[] = [
   },
   {
     version: '7.0.0',
+    status: 'candidate',
     suffix: '+ls',
     title: 'Carbon: Prime',
     date: null,

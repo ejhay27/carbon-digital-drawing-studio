@@ -1,19 +1,21 @@
-# Carbon: Prime — repository baseline and implementation progress
+# Carbon: Prime — intermediate 7.5.1+ls audit snapshot (superseded)
 
-**Baseline audit date:** 2026-10-11 · **Progress updated:** 2026-10-11
+> This 2026-10-11 snapshot records the repository before the Drawing Replay / My Illustrations 7.6.0+ls update. Its version, branch and worktree statements are historical, not current. See [`AUDIT-7.6.0-candidate.md`](AUDIT-7.6.0-candidate.md) for the current audit.
+
+**Snapshot date:** 2026-10-11 · **Progress recorded:** 2026-10-11
 
 **Repository:** [`ejhay27/carbon-digital-drawing-studio`](https://github.com/ejhay27/carbon-digital-drawing-studio)
 
 **Session branch:** `arena/a19e311c-carbon-digital-drawing-studio`
 
-**Existing PR:** #2 is open against `main`; the changes documented below have not been committed or pushed to GitHub. No rebase, merge, force-push, or default-branch edit was performed.
+**Existing PR:** #2 is open against `main`. Commit `ae88685` with the initial 7.5.1+ls brush-asset implementation was pushed to the session branch; the current follow-up for camera-free QR import and imported-brush management is still local and uncommitted. No rebase, merge, force-push, or default-branch edit was performed.
 
 **Current working-tree build identity:** `7.5.1+ls` (package version `7.5.1`). The user clarified the requested bare version as `7.5.1`; the release line stays Carbon: Prime `7.x+ls`. This is a local, unpublished source candidate, not a published GitHub release.
 
 ## Progress after the 7.1.1 baseline
 
 - **Marketplace/shared asset foundation:** bundled packs remain usable offline; validated brush-pack bytes/metadata use a local IndexedDB asset store with configurable size limits, origin storage estimates and input-versus-installed size reporting. No remote catalog URL is configured; online packs are unavailable.
-- **QR brush sharing:** versioned `carbon-brush-qr` payloads are capped at 1,800 UTF-8 bytes, reject arbitrary URLs and embedded stamp data, and flow through validated pack storage. The UI includes QR PNG/text shares, image-file decoding and an explicit camera flow; end-to-end camera/browser/platform acceptance has not been done.
+- **QR brush sharing/import:** versioned `carbon-brush-qr` payloads are capped at 1,800 UTF-8 bytes, reject arbitrary URLs and embedded stamp data, and flow through validated pack storage. Import now scans a user-selected QR image locally without camera access and selects the first imported brush for use. The Brushes panel has an Imported Brushes filter/section; users can export an imported brush and then optionally remove that individual brush (rewriting only its imported pack when needed). End-to-end browser/platform acceptance has not been done.
 - **Brush Lab/custom erasers:** Brush Lab edits an isolated draft using the actual brush renderer's preview and saves custom presets in local app state. Custom Eraser Studio stores eraser tips separately; selection is guarded by Eraser tool mode. Deletion confirms and cleans up app references. These flows are code-level implemented but not manually browser-tested.
 - **Build identity:** `package.json`, `package-lock.json`, `src/version.ts`, release notes and current docs are being kept on `7.5.1` / `7.5.1+ls`; Android retains its separate `CARBON 1.0.0` identity.
 - **Remaining requested roadmap:** a fully unified asset manager, illustration-file browser/storage workflows, later 3D/Home/about performance acceptance, and Windows/Android platform packaging/testing are not claimed complete.
@@ -22,7 +24,7 @@
 
 - Published release list: **`v1.0.2`** is the only listed release. Remote tags are `v1.0.0`, `v1.0.2`, `v1.0.3`, and `v1.0.4`; a tag alone does not establish a published artifact.
 - Current `main` is inconsistent: README title is `7.1.0+ls`, its summary still calls the build `7.0.0+ls`, and `package.json`, `package-lock.json`, and `src/version.ts` remain `7.0.0`.
-- At the audited baseline commit, the session branch had the 7.1.1+ls source/README candidate and matching package, lockfile, source, and release-note metadata. Subsequent 7.5.1+ls work remains only in the local session working tree; PR #2 is not merged.
+- At the audited baseline commit, the session branch had the 7.1.1+ls source/README candidate. The initial 7.5.1+ls implementation was pushed as `ae88685`; the current imported-brush follow-up is local and not yet pushed. PR #2 is not merged.
 - The only checked-in GitHub Actions workflow is `.github/workflows/windows.yml`; no Android workflow is present in the current main tree.
 
 ## Languages, frameworks and architecture
@@ -76,12 +78,12 @@ This table records the original audit before the 7.5.1+ls work above; rows that 
 
 | Check | Result |
 |---|---|
-| `npm test` | **Pass — 296 assertions, 0 failures**, including custom eraser lookup, selection, edit and local-preference persistence. |
+| `npm test` | **Pass — 302 assertions, 0 failures**, including custom eraser persistence and imported-brush tagging/removal helpers. |
 | `npm run typecheck` | **Pass — `tsc --noEmit`.** |
-| `npm run build` | **Pass — Vite 7.3.2 single-file output, 2,010.08 kB (gzip 693.74 kB).** |
+| `npm run build` | **Pass — Vite 7.3.2 single-file output, 2,013.45 kB (gzip 694.86 kB).** |
 | `git diff --check` | **Pass.** |
 | Lint | **Not configured**; no lint script exists. |
-| Browser UI / QR camera | **Not manually tested end to end.** |
+| Browser UI / QR image import | **Not manually tested end to end.** |
 | Windows package/runtime | **Not built or runtime-tested.** |
 | Android APK/device | **Not built or device-tested.** |
 | `npm audit --omit=dev` | Earlier check reported three moderate `uuid`/`xcode`/Capacitor CLI findings; no breaking dependency upgrade was applied. Recheck before publication. |

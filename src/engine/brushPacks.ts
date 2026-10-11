@@ -116,6 +116,14 @@ export function setInstalledPacks(list: InstalledPack[]) {
 export function extraBrushes(enabled: boolean): BrushParams[] { return enabled ? cache || winCoreMemo() : []; }
 export const installedPacks = () => installed;
 
+/** Remove one imported brush while preserving the rest of its installed pack. Null means the pack is now empty. */
+export function withoutInstalledPackBrush(pack: InstalledPack, brushId: string): InstalledPack | null {
+  if (pack.source === 'catalog') throw new Error('Bundled catalog brushes cannot be removed individually.');
+  if (!pack.brushes?.some((brush) => brush.id === brushId)) throw new Error('This brush is not in the selected imported pack.');
+  const brushes = pack.brushes.filter((brush) => brush.id !== brushId);
+  return brushes.length ? { ...pack, brushes } : null;
+}
+
 // ---------------------------------------------------------------- safe import
 const TIPS: TipShape[] = ['round', 'square', 'grain', 'pencil', 'chalk', 'charcoal', 'bristle', 'flat', 'splatter', 'star', 'leaf', 'cloud', 'fabric', 'dots', 'sponge', 'hatch', 'stamp', 'grass', 'hair', 'flower', 'drop', 'snow', 'flame', 'brick', 'wood', 'scratch', 'rock', 'window', 'ornament'];
 const MODES: BrushMode[] = ['normal', 'wash', 'smudge', 'mix', 'crisp'];
@@ -150,9 +158,17 @@ export function parsePack(text: string, existing: BrushParams[], maxBytes = DEFA
   // Imported packs are namespaced once. Re-export/reload keeps the same namespace and brush IDs.
   const packId = rawPackId.replace(/^imp-/i, '') || 'import';
   const brushes: BrushParams[] = [];
+  const seenBrushIds = new Set<string>();
+  const existingIds = new Set(existing.map((brush) => brush.id));
   data.brushes.forEach((raw0, i) => {
     const raw = (raw0 || {}) as Record<string, unknown>;
-    const b: BrushParams = { ...BASE, id: `ip-${packId}-${i}`, name: String(raw.name || `Brush ${i + 1}`).slice(0, 60), category: String(raw.category || data.category || 'Imported').slice(0, 40), tags: Array.isArray(raw.tags) ? raw.tags.map(String).slice(0, 12) : ['imported'], description: String(raw.description || '').slice(0, 300), builtin: false };
+    const candidateId = typeof raw.id === 'string' && /^ip-[a-z0-9._-]{1,120}$/i.test(raw.id) && !existingIds.has(raw.id) ? raw.id : '';
+    let brushId = candidateId || `ip-${packId}-${i}`;
+    let collision = 0;
+    while (seenBrushIds.has(brushId) || existingIds.has(brushId)) brushId = `ip-${packId}-${i}-${++collision}`;
+    seenBrushIds.add(brushId);
+    const sourceTags = Array.isArray(raw.tags) ? raw.tags.map(String).map((tag) => tag.slice(0, 40)).slice(0, 11) : [];
+    const b: BrushParams = { ...BASE, id: brushId, name: String(raw.name || `Brush ${i + 1}`).slice(0, 60), category: String(raw.category || data.category || 'Imported').slice(0, 40), tags: [...new Set([...sourceTags, 'imported'])].slice(0, 12), description: String(raw.description || '').slice(0, 300), builtin: false };
     for (const k of NUM_KEYS) {
       const v = Number(raw[k]);
       if (Number.isFinite(v)) (b as unknown as Record<string, number>)[k] = Math.max(-360, Math.min(1000, v));

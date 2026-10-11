@@ -1,14 +1,14 @@
 # CARBON for Windows
 
-## Current source candidate: Carbon: Prime 7.5.1+ls
+## Current source candidate: Carbon: Prime 7.6.0+ls
 
 The Windows/desktop source identity remains **Carbon: Prime 7.x+ls** (`+ls` = Local Storage).
-`7.5.1+ls` is a local, unpublished source candidate. It adds a validated local brush-pack asset
-store, offline bundled Marketplace UI, QR brush sharing/import flow, draft-based Brush Lab and
-separate custom eraser presets. No remote catalog host is configured. This code-level work does
-not establish browser acceptance, Windows installer/runtime support or Android acceptance; QR
-camera decoding is unverified. See
-[`AUDIT-CURRENT-7.1.1+ls.md`](./AUDIT-CURRENT-7.1.1+ls.md) for the implementation boundaries and
+`7.6.0+ls` is a local, unpublished source candidate. It improves event-based Drawing Replay,
+pause preservation, local recovery autosave, My Illustrations replay management and the distinction
+between flattened artwork exports and editable `.carbon` projects with replay. The existing local
+brush/asset workflows remain; no remote catalog host is configured. Code-level tests and a web
+build pass, but browser acceptance, Windows installer/runtime and Android acceptance remain
+unverified. See [`AUDIT-7.6.0-candidate.md`](./AUDIT-7.6.0-candidate.md) for scope and
 [`PRIME-7.md`](./PRIME-7.md) for version history.
 
 ---

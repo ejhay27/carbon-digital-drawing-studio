@@ -17,6 +17,7 @@ import { BrushFusionDialog } from '../win/BrushFusion';
 import { ABOUT_CREATOR, ABOUT_PROJECT_COPY } from './aboutCopy';
 import CommandPalette from './CommandPalette';
 import QuickStartDialog from './QuickStartDialog';
+import MyIllustrationsDialog from './MyIllustrationsDialog';
 
 const close = () => setApp({ dialog: null }); // closes any open dialog
 
@@ -79,7 +80,7 @@ function ExportDialog() {
         {type !== 'image/png' && <Slider label="Quality" value={q} min={0.3} max={1} onChange={setQ} />}
         <Select label="Scale" value={String(scale)} onChange={(v) => setScale(Number(v))} options={[0.25, 0.5, 1, 2, 3].map((s) => ({ value: String(s), label: `${s}× (${Math.round(d.width * s)}×${Math.round(d.height * s)})` }))} />
         {type !== 'image/jpeg' && <Toggle label="Keep transparency (omit transparent background)" checked={transparent} onChange={setTransparent} />}
-        <p className="text-[11px] text-neutral-500">Crisp Ink layers are rendered at the export resolution, so upscaled exports keep sharp line art. {tooBig && <span className="text-red-400">{tooBig}</span>}</p>
+        <p className="text-[11px] text-neutral-500">This flattens the visible artwork to PNG, JPEG or WebP; it does not contain editable layers or replay events. Save a .carbon project for editable artwork and Drawing Replay. Crisp Ink stays sharp when upscaled. {tooBig && <span className="text-red-400">{tooBig}</span>}</p>
       </div>
     </Modal>
   );
@@ -175,7 +176,8 @@ function SettingsDialog({ initialTab = 'interface' }: { initialTab?: string }) {
             <Toggle label="Brush outline cursor" checked={s.brushOutline} onChange={(v) => apply({ brushOutline: v })} />
             <Slider label="Grid size" value={s.gridSize} min={8} max={512} step={8} fmt={(v) => v + 'px'} onChange={(v) => apply({ gridSize: v })} />
             <Toggle label="Restore previous session on launch" checked={s.restoreSession} onChange={(v) => apply({ restoreSession: v })} />
-            <Slider label="Autosave every" value={s.autosaveSec} min={10} max={300} step={5} fmt={(v) => v + 's'} onChange={(v) => apply({ autosaveSec: v })} />
+            <Slider label="Recovery sweep interval" value={s.autosaveSec} min={10} max={300} step={5} fmt={(v) => v + 's'} onChange={(v) => apply({ autosaveSec: v })} />
+            <p className="text-[10px] leading-relaxed text-neutral-500">Committed document edits also schedule a local IndexedDB recovery save after a short quiet period; this interval is the periodic fallback sweep.</p>
             <Slider label="Undo steps" value={s.undoLimit} min={10} max={200} step={5} fmt={(v) => String(v)} onChange={(v) => apply({ undoLimit: v })} />
           </>}
           {tab === 'home' && EDITION.windows && <>
@@ -192,10 +194,11 @@ function SettingsDialog({ initialTab = 'interface' }: { initialTab?: string }) {
             <p className="pt-2 text-[11px] leading-relaxed text-neutral-500">Two-finger drag pans, pinch zooms, twist rotates. Pressure and tilt are read from Pointer Events when the device and OS provide them. Palm rejection relies on the OS. Turn on stylus-only mode to ignore touch drawing completely.</p>
           </>}
           {tab === 'replay' && <>
-            <Toggle label="Record Drawing Replay for new documents" checked={s.recordByDefault} onChange={(v) => apply({ recordByDefault: v })} />
-            <Slider label="Storage limit / doc" value={s.replayLimitMB} min={20} max={1000} step={10} fmt={(v) => v + ' MB'} onChange={(v) => apply({ replayLimitMB: v })} />
-            <Slider label="Idle compression" value={s.idleCapSec} min={0.5} max={10} step={0.5} fmt={(v) => v + 's'} onChange={(v) => apply({ idleCapSec: v })} />
-            <p className="pt-2 text-[11px] leading-relaxed text-neutral-500">Pauses longer than the idle compression value are shortened in the replay timeline. When a document reaches its storage limit, recording pauses automatically and the artwork is unaffected. All recordings stay on this device.</p>
+            <Toggle label="Automatically record new drawings and opened projects without replay" checked={s.recordByDefault} onChange={(v) => apply({ recordByDefault: v })} />
+            <Slider label="Replay memory limit / project" value={s.replayLimitMB} min={20} max={1000} step={10} fmt={(v) => v + ' MB'} onChange={(v) => apply({ replayLimitMB: v })} />
+            <Toggle label="Shorten long pauses in Drawing Replay" checked={s.compressReplayPauses} onChange={(v) => apply({ compressReplayPauses: v })} />
+            {s.compressReplayPauses && <Slider label="Maximum replay pause" value={s.idleCapSec} min={0.5} max={10} step={0.5} fmt={(v) => v + 's'} onChange={(v) => apply({ idleCapSec: v })} />}
+            <p className="pt-2 text-[11px] leading-relaxed text-neutral-500">By default, Drawing Replay keeps the real time between drawing operations. Optional pause shortening is off until you turn it on. No idle frames, cursor or hand movement, menus, screen, microphone or camera are recorded. When the estimated replay memory limit is reached, recording pauses automatically; artwork is unaffected. Replay data stays local and is stored with its project.</p>
           </>}
           {tab === 'workspace' && EDITION.windows && <ColorDockSettings />}
           {tab === 'android' && <>
@@ -277,7 +280,7 @@ assets/<id>              embedded imported images
 replay/events.json       { brushes:[…deduplicated…], events:[{t,c|u|m|cp}] }
 replay/cp/<n>/<id>.png   checkpoint layer pixels
 thumbnail.png            preview`}</pre>
-        <p><b>Safe save:</b> the archive is fully serialised and verified before anything is written. Where the File System Access API is available, writes go to a swap file that replaces the original only when it closes successfully. Otherwise a new file is downloaded. A local backup copy is also kept. Autosave writes every open document to IndexedDB for crash recovery.</p>
+        <p><b>Safe save:</b> the archive is fully serialised and verified before anything is written. Where the File System Access API is available, writes go to a swap file that replaces the original only when it closes successfully. Otherwise a new file is downloaded. A local backup copy is also kept. Changed documents are autosaved to IndexedDB shortly after committed edits, with periodic and app-lifecycle recovery sweeps.</p>
         <SectionTitle>Platform note</SectionTitle>
         <p><b>Android:</b> the same build ships as an APK in a Capacitor 8 shell (see docs/ANDROID.md). It saves projects natively to Documents/CARBON, exports through the share sheet, handles the back button, autosaves in the background and has automatic palm rejection. {isNative() ? 'You are running the Android edition.' : ''}</p>
         <p>{APP_LABEL} is a local-first application. It runs offline in desktop browsers on Windows and on Android tablets (Chrome), and no account is required. The engine sits behind platform adapters (file access, input, storage), which leaves room for future native packaging.</p>
@@ -360,6 +363,7 @@ export default function Dialogs() {
     case 'shortcuts': return <SettingsDialog initialTab="shortcuts" />;
     case 'commandPalette': return <CommandPalette />;
     case 'quickStart': return <QuickStartDialog />;
+    case 'projects': return <MyIllustrationsDialog />;
     case 'colorDock': return EDITION.windows ? <SettingsDialog initialTab="workspace" /> : null;
     case 'patches': return EDITION.windows ? <PatchesDialog /> : null;
     case 'fusion': return EDITION.windows ? <BrushFusionDialog /> : null;

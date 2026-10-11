@@ -7,8 +7,8 @@ import { LiquifySession } from '../engine/liquify';
 import { StrokeRenderer } from '../engine/strokeRenderer';
 import { sampleRegion } from '../engine/render';
 import { hitComic, newBalloon, newFx, objBounds } from '../engine/comic';
-import { CATALOG, setInstalledPacks, type InstalledPack } from '../engine/brushPacks';
-import { getStoredBrushPack, restoreStoredBrushPack, storeBrushPackAsset } from '../engine/assetStore';
+import { CATALOG, setInstalledPacks, withoutInstalledPackBrush, type InstalledPack } from '../engine/brushPacks';
+import { getStoredBrushPack, removeStoredBrushPack, restoreStoredBrushPack, storeBrushPackAsset } from '../engine/assetStore';
 import { invM, mapPt, rgbToHex, uid, viewMatrix } from '../engine/util';
 import { activeDoc, currentBrush, getApp, setApp, setColor, toast, useApp } from '../state/store';
 import { canvasBus, viewChanged, zoomAt } from '../state/commands';
@@ -71,6 +71,42 @@ export const useWin = create<WinState>()(
   ),
 );
 export const setWin = (p: Partial<WinState>) => useWin.setState(p);
+
+/** Remove one imported brush from its pack, rewriting the shared IndexedDB asset; bundled catalog packs are immutable. */
+export async function removeImportedBrushFromPack(brushId: string) {
+  const initial = useWin.getState();
+  const owner = initial.packs.find((pack) => pack.source !== 'catalog' && pack.brushes?.some((brush) => brush.id === brushId));
+  if (!owner) throw new Error('This imported brush is no longer installed.');
+  const reduced = withoutInstalledPackBrush(owner, brushId);
+  if (reduced) {
+    const stored = await getStoredBrushPack(owner.id);
+    await storeBrushPackAsset({
+      id: reduced.id, name: reduced.name, category: reduced.category, version: reduced.version,
+      source: reduced.source, brushes: reduced.brushes || [], downloadBytes: stored?.downloadBytes,
+    }, Infinity);
+  } else {
+    await removeStoredBrushPack(owner.id);
+  }
+
+  const latest = useWin.getState();
+  const packs = reduced
+    ? latest.packs.map((pack) => pack.id === owner.id ? reduced : pack)
+    : latest.packs.filter((pack) => pack.id !== owner.id);
+  setWin({ packs });
+
+  const app = getApp();
+  const overrides = { ...app.overrides };
+  delete overrides[brushId];
+  setApp({
+    overrides,
+    favorites: app.favorites.filter((id) => id !== brushId),
+    recentBrushes: app.recentBrushes.filter((id) => id !== brushId),
+    collections: app.collections.map((collection) => ({ ...collection, ids: collection.ids.filter((id) => id !== brushId) })),
+    brushId: app.brushId === brushId ? 'pencil-hb' : app.brushId,
+    eraserBrushId: app.eraserBrushId === brushId ? 'eraser-hard' : app.eraserBrushId,
+  });
+  return { name: owner.name, remainingBrushes: reduced?.brushes?.length || 0 };
+}
 
 async function hydrateInstalledPackAssets(packs: InstalledPack[]) {
   let migrationSucceeded = true;

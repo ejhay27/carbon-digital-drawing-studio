@@ -1,4 +1,4 @@
-# Carbon: Prime 7.5.1+ls
+# Carbon: Prime 7.6.0+ls
 
 **Where all starts begin.**
 
@@ -10,28 +10,33 @@ runs as an offline-capable web app and has a separate Capacitor-based Android bu
 Projects and preferences stay on the user's device; the app does not require an account or a
 cloud service.
 
-- **Current Windows/desktop source candidate:** `7.5.1+ls` — not published.
+- **Current Windows/desktop source candidate:** `7.6.0+ls` — not published.
 - **Android identity:** `CARBON 1.0.0` — separately versioned and unchanged by this update.
 - **`+ls`:** the Carbon: Prime Local Storage release line; data is kept in local browser storage
   and project files, or through Android's local file adapter.
 - **Developer:** Ejhay Claus B. Predonio.
 
-The `7.5.1+ls` source candidate adds a local-first brush-asset foundation: offline bundled packs,
-validated pack storage/imports, compact QR brush sharing, and draft-based Brush Lab and Custom
-Eraser Studio. No remote marketplace catalog is configured, so online packs are not available.
-This is not a published release. QR scanning and UI flows have not had end-to-end browser or
-platform acceptance; the Windows installer and Android device paths also remain unverified.
-See [`docs/AUDIT-CURRENT-7.1.1+ls.md`](docs/AUDIT-CURRENT-7.1.1+ls.md) for the baseline and
-current implementation/verification boundaries.
+The `7.6.0+ls` source candidate improves event-based Drawing Replay, preserves pauses by default,
+autosaves committed edits to local recovery, and exposes recording controls from My Illustrations.
+It retains the existing local-first brush-asset foundation (offline bundled packs, validated
+imports, selected-image QR scanning, Brush Lab and custom erasers). No remote marketplace catalog
+is configured. It is not a published release; browser interaction, Windows runtime/installer and
+Android APK/device acceptance remain unverified. See
+[`docs/AUDIT-7.6.0-candidate.md`](docs/AUDIT-7.6.0-candidate.md) for scope, test evidence and
+platform limitations.
 
 ## Features
 
 - **2D drawing and painting:** customizable brushes, color tools, layers, selections, shapes,
   filters and transform tools.
 - **Crisp Ink:** editable vector-like line-art strokes that can be adjusted after drawing.
-- **Drawing Replay:** record, play, seek and export a local drawing session.
-- **Home project finder:** search projects, pin favorites and sort by recency, name or size.
-  Browser-local recent projects remain distinct from Android device files.
+- **Drawing Replay:** record, play, seek and export a local drawing session. Real pauses are
+  preserved by default; start/pause/resume/stop controls do not conflate stopping with deleting
+  replay history. Native replay stays in the editable `.carbon` project.
+- **My Illustrations:** search, pin and sort browser-local recent projects and Android device
+  files, accessible from Home or File → My Illustrations while editing. Project cards can open
+  the associated Drawing Replay and recording controls; browser recents remain distinct from
+  Android folder files. Windows still relies on browser-local recents rather than a full folder scan.
 - **Command palette:** press **Ctrl+K** to search actions, drawing tools, workspaces, settings
   and recent files; navigate with the keyboard.
 - **Offline Quick Start:** an optional, dismissible guide with a multi-layer editable sample.
@@ -41,8 +46,10 @@ current implementation/verification boundaries.
   configured in this repository; the UI does not pretend online packs exist.
 - **Brush Lab and Custom Erasers:** isolated draft editing through the real brush preview and
   separate local custom brush/eraser presets.
-- **QR brush sharing:** bounded payloads, QR PNG/text sharing, local image-file decoding and an
-  explicit camera flow; arbitrary URLs are rejected. End-to-end scanner acceptance is pending.
+- **QR brush sharing:** bounded payloads, QR PNG/text sharing, and camera-free scanning of a
+  selected QR image; the first imported brush is selected for use. The Brushes panel has an
+  Imported Brushes section with export-and-remove controls. Arbitrary URLs are rejected;
+  end-to-end scanner acceptance is pending.
 - **3D Studio (Windows/desktop):** White Ground, perspective grid, camera navigation,
   editable spatial strokes and mirror/radial surface symmetry projected onto real mesh surfaces.
 - **Comics Studio (Windows/desktop):** pages, panels, balloons, lettering and export tools.
@@ -132,19 +139,21 @@ See [`docs/ANDROID.md`](docs/ANDROID.md). The separate Android build uses JDK 21
 ## Testing and project status
 
 - `npm run typecheck` — strict TypeScript check.
-- `npm test` — Node regression suite (**258 assertions passed, 0 failed** in the current source-check run; the earlier 7.1.0+ls audit recorded 255 assertions).
+- `npm test` — Node regression suite (**319 assertions passed, 0 failed** in the 7.6.0+ls source-candidate check).
 - **Help → Run Diagnostics** — in-app Canvas/WebGL acceptance tests; not yet run in a browser
   for this candidate.
 - Browser interaction and visual acceptance, Windows installer/runtime testing, and Android
   APK/device testing remain outstanding.
 
-The 7.1.1+ls version is a **local source candidate only**. No GitHub release or native installer
-was published. See [`docs/AUDIT-7.1.0+ls.md`](docs/AUDIT-7.1.0+ls.md) for feature evidence,
-compatibility notes and outstanding acceptance work.
+The current 7.6.0+ls build identity is an **unpublished source candidate**, not a completed release.
+No native installer or Android APK is claimed. See
+[`docs/AUDIT-7.6.0-candidate.md`](docs/AUDIT-7.6.0-candidate.md) for status, evidence, verification
+results and remaining acceptance work; the 7.1.0+ls documents below are historical.
 
 ## Project documentation
 
-- [`docs/AUDIT-7.1.0+ls.md`](docs/AUDIT-7.1.0+ls.md) — feature implementation evidence and
+- [`docs/AUDIT-7.6.0-candidate.md`](docs/AUDIT-7.6.0-candidate.md) — current repository audit, verified changes and platform acceptance gaps.
+- [`docs/AUDIT-7.1.0+ls.md`](docs/AUDIT-7.1.0+ls.md) — historical feature implementation evidence and
   verification limits for the 7.1.0+ls feature candidate.
 - [`docs/AUDIT-7.1.0+ls-baseline.md`](docs/AUDIT-7.1.0+ls-baseline.md) — initial source-baseline audit.
 - [`docs/PRIME-7.md`](docs/PRIME-7.md) — Carbon: Prime 7.x feature and platform notes.

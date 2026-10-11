@@ -51,6 +51,7 @@ export interface Settings {
   autosaveSec: number;
   recordByDefault: boolean;
   replayLimitMB: number;
+  compressReplayPauses: boolean;
   assetMaxDownloadMB: number;
   assetMaxInstallMB: number;
   idleCapSec: number;
@@ -154,7 +155,7 @@ export const DEFAULT_PALETTE: PaletteCfg = {
 
 export const DEFAULT_SETTINGS: Settings = {
   uiScale: 1, uiMode: 'auto', homeSceneEnabled: true, homeSceneMotion: true, restoreSession: true, autosaveSec: 30, recordByDefault: true, replayLimitMB: 250,
-  assetMaxDownloadMB: 100, assetMaxInstallMB: 500, idleCapSec: 2.5,
+  compressReplayPauses: false, assetMaxDownloadMB: 100, assetMaxInstallMB: 500, idleCapSec: 2.5,
   undoLimit: 80, stylusOnly: false, twoFingerTap: 'undo', threeFingerTap: 'redo', shortcuts: { ...DEFAULT_SHORTCUTS },
   railTools: ALL_TOOLS.map((t) => t.id), gridSize: 64, showGrid: false, showRulers: false, showGuides: true, perspective: false,
   brushOutline: true, mousePressure: false, palmAuto: true, shareExports: true, immersive: true,
@@ -176,6 +177,7 @@ export function mergeSettings(persisted: Partial<Settings> = {}): Settings {
     ...persisted,
     pinnedProjects: pins,
     homeProjectSort: sort,
+    compressReplayPauses: typeof persisted.compressReplayPauses === 'boolean' ? persisted.compressReplayPauses : false,
     assetMaxDownloadMB,
     assetMaxInstallMB,
     quickStartSeen: typeof persisted.quickStartSeen === 'boolean' ? persisted.quickStartSeen : DEFAULT_SETTINGS.quickStartSeen,
@@ -185,7 +187,7 @@ export function mergeSettings(persisted: Partial<Settings> = {}): Settings {
 
 export interface Toast { id: string; msg: string; kind: 'info' | 'error' | 'success' }
 export interface ConfirmReq { title: string; message: string; actions: { label: string; value: string; variant?: 'primary' | 'danger' }[]; resolve: (v: string) => void; input?: string }
-export type DialogType = 'new' | 'settings' | 'export' | 'canvasSize' | 'imageSize' | 'about' | 'projectInfo' | 'shortcuts' | 'diagnostics' | 'space' | 'docs' | 'paletteEdit' | 'colorDock' | 'patches' | 'fusion' | 'commandPalette' | 'quickStart' | 'settingsHome' | null;
+export type DialogType = 'new' | 'settings' | 'export' | 'canvasSize' | 'imageSize' | 'about' | 'projectInfo' | 'projects' | 'shortcuts' | 'diagnostics' | 'space' | 'docs' | 'paletteEdit' | 'colorDock' | 'patches' | 'fusion' | 'commandPalette' | 'quickStart' | 'settingsHome' | null;
 
 export interface AppState {
   docs: DocEngine[];

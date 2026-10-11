@@ -31,9 +31,10 @@ export class Recorder {
   paused = false;
   events: RecEvent[] = [];
   time = 0;
-  lastWall = 0;
+  lastWall: number | null = null;
   epoch = 0;
-  idleCap = 2500;
+  /** Maximum wall-clock gap retained between recorded edits; the default preserves the full pause. */
+  idleCap = Number.MAX_SAFE_INTEGER;
   limitBytes = 250 * 1024 * 1024;
   bytes = 0;
   lastEnd = 0;
@@ -42,11 +43,13 @@ export class Recorder {
   get active() {
     return this.enabled && !this.paused;
   }
-  clock() {
-    const w = performance.now();
-    if (this.lastWall) this.time += Math.min(w - this.lastWall, this.idleCap);
-    this.lastWall = w;
+  clockAt(wallNow: number) {
+    if (this.lastWall !== null) this.time += Math.min(Math.max(0, wallNow - this.lastWall), this.idleCap);
+    this.lastWall = wallNow;
     return Math.round(this.time);
+  }
+  clock() {
+    return this.clockAt(performance.now());
   }
   push(ev: RecEvent, dur = 0, bytes = 120) {
     ev.t = Math.max(this.lastEnd, ev.t);
@@ -79,11 +82,23 @@ export function eventDuration(e: RecEvent) {
   return 0;
 }
 export function eventBytes(e: RecEvent, w: number, h: number) {
-  if (e.cp) return Math.round(w * h * e.cp.layers.length * 0.35) + 400;
-  if (e.c?.k === 'stroke') return e.c.s.length * 6 + 120;
-  if (e.c?.k === 'inkSet') return JSON.stringify(e.c.strokes).length;
-  if (e.c?.k === 'inkAdd') return JSON.stringify(e.c.stroke).length;
-  return 100;
+  if (e.cp) {
+    // Checkpoints retain full canvas clones in memory. Estimate raw RGBA memory, not compressed PNG size.
+    let bytes = 400 + JSON.stringify({ w: e.cp.w, h: e.cp.h, background: e.cp.background, activeLayerId: e.cp.activeLayerId, selection: e.cp.selection }).length * 2;
+    for (const layer of e.cp.layers) {
+      const { canvas, mask, strokes, comic, ...data } = layer;
+      bytes += canvas ? canvas.width * canvas.height * 4 : layer.type === 'raster' ? w * h * 4 : 0;
+      if (mask) bytes += mask.width * mask.height * 4;
+      bytes += Math.max(128, JSON.stringify(data).length * 2);
+      if (strokes) bytes += strokes.reduce((sum, stroke) => sum + stroke.pts.length * 16 + 160, 0);
+      if (comic) bytes += JSON.stringify(comic).length * 2;
+    }
+    return Math.ceil(bytes);
+  }
+  if (e.c?.k === 'stroke') return Math.ceil(e.c.s.length * 16 + JSON.stringify(e.c.brush).length * 2 + 256);
+  if (e.c?.k === 'inkSet') return Math.ceil(JSON.stringify(e.c.strokes).length * 2 + 128);
+  if (e.c?.k === 'inkAdd') return Math.ceil(JSON.stringify(e.c.stroke).length * 2 + 128);
+  return Math.max(100, Math.ceil(JSON.stringify(e.c || e).length * 2));
 }
 
 // ---------------- snapshots ----------------
@@ -348,7 +363,7 @@ export class DocEngine {
   startRecording() {
     this.rec.enabled = true;
     this.rec.paused = false;
-    this.rec.lastWall = 0;
+    this.rec.lastWall = null;
     this.recordCheckpoint();
     this.emit();
   }
@@ -359,8 +374,15 @@ export class DocEngine {
   resumeRecording() {
     if (!this.rec.enabled) return this.startRecording();
     this.rec.paused = false;
-    this.rec.lastWall = 0;
+    this.rec.lastWall = null;
     this.recordCheckpoint();
+    this.emit();
+  }
+  /** Stop future capture without deleting the document's existing replay history. */
+  stopRecording() {
+    this.rec.enabled = false;
+    this.rec.paused = false;
+    this.rec.lastWall = null;
     this.emit();
   }
   clearRecording() {
@@ -368,7 +390,7 @@ export class DocEngine {
     this.rec.bytes = 0;
     this.rec.time = 0;
     this.rec.lastEnd = 0;
-    this.rec.lastWall = 0;
+    this.rec.lastWall = null;
     this.rec.enabled = false;
     this.rec.paused = false;
     this.dirty = true;
@@ -380,7 +402,10 @@ export class DocEngine {
     this.rec.push({ t: this.rec.clock(), cp }, 0, eventBytes({ t: 0, cp }, this.width, this.height));
   }
   mark(label: string) {
-    if (this.rec.active) this.rec.push({ t: this.rec.clock(), m: label }, 0, 40);
+    if (this.rec.active) {
+      this.rec.push({ t: this.rec.clock(), m: label }, 0, 40);
+      this.emit(); // keep marker-only changes visible and included in session autosave
+    }
   }
 }
 

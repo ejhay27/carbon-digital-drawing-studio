@@ -97,7 +97,7 @@ export async function openQuickStartSample(): Promise<DocEngine | null> {
     doc.fileName = null;
     doc.fileHandle = null;
     doc.dirty = false;
-    addDoc(doc, false);
+    addDoc(doc);
     toast('Opened the offline .carbon sample as a new editable document. Your existing work was left unchanged.', 'success');
     return doc;
   } catch (e) {

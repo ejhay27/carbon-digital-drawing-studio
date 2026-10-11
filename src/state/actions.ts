@@ -9,21 +9,33 @@ import { activeDoc, bump, confirmDialog, getApp, promptDialog, setApp, showPanel
 
 const autosavedRev = new WeakMap<DocEngine, number>(); // last autosaved revision per document
 const unsubs = new Map<string, () => void>();
+let autosaving = false;
+let autosaveRequested = false;
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleAutosave(delay = 1200) {
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    autosaveTimer = null;
+    void autosaveAll();
+  }, delay);
+}
 
 export function configureDoc(doc: DocEngine) {
   const s = getApp().settings;
   doc.undoLimit = s.undoLimit;
   doc.undoBytes = isNative() ? 320 * 1024 * 1024 : 900 * 1024 * 1024; // mobile WebView memory budget
-  doc.rec.idleCap = s.idleCapSec * 1000;
+  doc.rec.idleCap = s.compressReplayPauses ? s.idleCapSec * 1000 : Number.MAX_SAFE_INTEGER;
   doc.rec.limitBytes = s.replayLimitMB * 1024 * 1024;
-  doc.rec.onLimit = () => toast(`Replay storage limit (${s.replayLimitMB} MB) reached for "${doc.name}". Recording paused.`, 'error');
+  doc.rec.onLimit = () => toast(`Estimated replay memory limit (${s.replayLimitMB} MB) reached for "${doc.name}". Recording paused.`, 'error');
 }
 
 export function addDoc(doc: DocEngine, record?: boolean) {
   configureDoc(doc);
   if ((record ?? getApp().settings.recordByDefault) && !doc.rec.events.length) doc.startRecording();
-  unsubs.set(doc.id, doc.subscribe(() => bump()));
+  unsubs.set(doc.id, doc.subscribe(() => { bump(); scheduleAutosave(); }));
   setApp({ docs: [...getApp().docs, doc], activeId: doc.id, replay: null });
+  scheduleAutosave();
 }
 
 export function newDocument(w: number, h: number, name = 'Untitled', background: string | null = '#ffffff') {
@@ -44,7 +56,7 @@ export async function openBytes(bytes: Uint8Array, fileName: string, handle: unk
     doc.fileName = fileName;
     doc.fileHandle = handle;
     doc.name = fileName.replace(/\.carbon$/i, '') || doc.name;
-    addDoc(doc, false);
+    addDoc(doc);
     await addRecent(doc, bytes);
     toast(`Opened ${fileName}${doc.rec.events.length ? ` · replay: ${doc.rec.events.length} events` : ''}`, 'success');
     return doc;
@@ -91,7 +103,7 @@ export async function openComicFile(file: File) {
     pages.forEach((p, i) => {
       p.comic = { ...(p.comic || { bleed: 0, safe: 0, pageName: `Page ${i + 1}` }), id: cid, name, index: i } as NonNullable<DocEngine['comic']>;
       p.dirty = false;
-      addDoc(p, false);
+      addDoc(p);
     });
     setApp({ activeId: pages[0].id });
     toast(`Opened comic “${name}” (${pages.length} pages)`, 'success');
@@ -229,7 +241,7 @@ export async function duplicateDoc(doc: DocEngine) {
   d.meta.lineage = '';
   d.meta.branch = '';
   d.dirty = true;
-  addDoc(d, false);
+  addDoc(d);
 }
 
 export async function exportImage(doc: DocEngine, type: 'image/png' | 'image/jpeg' | 'image/webp', quality: number, scale: number, transparent: boolean) {
@@ -302,32 +314,41 @@ export async function listRecent() {
   const all = await idbAll<RecentEntry>('recent').catch(() => []);
   return all.sort((a, b) => b.value.savedAt - a.value.savedAt);
 }
-export async function openRecent(key: string) {
+export async function openRecent(key: string): Promise<DocEngine | null> {
   const e = await idbGet<RecentEntry>('recent', key);
-  if (!e) return toast('Recent document is no longer available.', 'error');
+  if (!e) { toast('Recent document is no longer available.', 'error'); return null; }
   const existing = getApp().docs.find((d) => (d.fileName || d.name) === key);
-  if (existing) return setApp({ activeId: existing.id });
-  await openBytes(e.bytes, key);
+  if (existing) { setApp({ activeId: existing.id }); return existing; }
+  return openBytes(e.bytes, key);
 }
 
-let autosaving = false;
 export async function autosaveAll(force = false) {
-  if (autosaving) return;
+  if (autosaving) { autosaveRequested = true; return; }
   autosaving = true;
+  let failed = false;
   try {
-    const docs = getApp().docs;
-    for (let i = 0; i < docs.length; i++) {
-      const d = docs[i];
-      if (!force && autosavedRev.get(d) === d.rev) continue;
+    const docs = getApp().docs.slice();
+    for (const d of docs) {
+      const revision = d.rev;
+      if (!force && autosavedRev.get(d) === revision) continue;
       const bytes = await serializeDoc(d);
-      await idbPut('session', d.id, { name: d.name, bytes, savedAt: Date.now(), fileName: d.fileName, order: i, dirty: d.dirty } as SessionEntry & { dirty: boolean });
-      autosavedRev.set(d, d.rev);
+      const order = getApp().docs.indexOf(d);
+      if (order < 0) continue;
+      await idbPut('session', d.id, { name: d.name, bytes, savedAt: Date.now(), fileName: d.fileName, order, dirty: d.dirty } as SessionEntry & { dirty: boolean });
+      // Mark only the revision we serialized; a newer edit during PNG/ZIP encoding gets another pass.
+      autosavedRev.set(d, revision);
+      if (d.rev !== revision) autosaveRequested = true;
     }
   } catch (e) {
+    failed = true;
     console.warn('autosave failed', e);
     toast('Autosave failed: ' + (e instanceof Error ? e.message : e), 'error');
   } finally {
     autosaving = false;
+    if (autosaveRequested) {
+      autosaveRequested = false;
+      if (!failed) scheduleAutosave(500);
+    }
   }
 }
 
@@ -346,8 +367,7 @@ export async function restoreSession() {
       doc.name = e.value.name;
       doc.fileName = e.value.fileName;
       doc.dirty = !!e.value.dirty;
-      addDoc(doc, false);
-      autosavedRev.set(doc, doc.rev);
+      addDoc(doc);
       n++;
     } catch (err) {
       toast(`Could not recover “${e.value.name}”: ${err instanceof Error ? err.message : err}`, 'error');
@@ -381,7 +401,7 @@ export function closeReplay() {
 export async function exportReplayVideo(doc: DocEngine, speed: number, onProgress: (p: number) => void, cancel: { cancelled: boolean }) {
   if (typeof MediaRecorder === 'undefined') throw new Error('Video recording is not supported on this platform.');
   const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'].find((m) => MediaRecorder.isTypeSupported(m));
-  if (!mime) throw new Error('No supported video codec.');
+  if (!mime) throw new Error('No supported WebM or MP4 video codec.');
   const player = new ReplayPlayer(doc);
   await player.prepare();
   const sc = Math.min(1, 1280 / Math.max(doc.width, doc.height));
@@ -389,36 +409,53 @@ export async function exportReplayVideo(doc: DocEngine, speed: number, onProgres
   const c = createCanvas(W, H);
   const ctx = ctxOf(c);
   const eff = Math.max(speed, player.duration / 90000);
+  if (typeof c.captureStream !== 'function') throw new Error('Canvas video capture is not supported on this platform.');
   const stream = c.captureStream(30);
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
-  const chunks: Blob[] = [];
-  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-  const draw = () => {
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, W, H);
-    const g = player.engine;
-    renderDoc(ctx, g, [W / g.width, 0, 0, H / g.height, 0, 0], W, H, { bg: true });
-  };
-  draw();
-  rec.start(250);
-  const t0 = performance.now();
-  await new Promise<void>((resolve) => {
-    const step = () => {
-      if (cancel.cancelled) return resolve();
-      const t = (performance.now() - t0) * eff;
-      player.seek(Math.min(t, player.duration));
-      draw();
-      onProgress(Math.min(1, t / Math.max(1, player.duration)));
-      if (t >= player.duration) setTimeout(resolve, 1500);
-      else setTimeout(step, 1000 / 30);
+  try {
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
+    const outputMime = (rec.mimeType || mime).split(';')[0].toLowerCase();
+    if (outputMime !== 'video/webm' && outputMime !== 'video/mp4') throw new Error(`Unsupported video output type: ${outputMime || 'unknown'}.`);
+    const chunks: Blob[] = [];
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    let encoderError: Error | null = null;
+    const done = new Promise<void>((resolve) => {
+      rec.onstop = () => resolve();
+      rec.onerror = (event) => {
+        encoderError = (event as Event & { error?: DOMException }).error || new Error('The video encoder failed.');
+        try { if (rec.state !== 'inactive') rec.stop(); } catch { resolve(); }
+      };
+    });
+    const draw = () => {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, W, H);
+      const g = player.engine;
+      renderDoc(ctx, g, [W / g.width, 0, 0, H / g.height, 0, 0], W, H, { bg: true });
     };
-    step();
-  });
-  const done = new Promise<void>((r) => (rec.onstop = () => r()));
-  rec.stop();
-  await done;
-  if (cancel.cancelled) return;
-  const blob = new Blob(chunks, { type: mime.split(';')[0] });
-  download(blob, `${safeName(doc.name)}-replay.${mime.includes('mp4') ? 'mp4' : 'webm'}`);
-  toast('Replay video exported', 'success');
+    draw();
+    rec.start(250);
+    const t0 = performance.now();
+    await new Promise<void>((resolve) => {
+      const step = () => {
+        if (cancel.cancelled || encoderError) return resolve();
+        const t = (performance.now() - t0) * eff;
+        player.seek(Math.min(t, player.duration));
+        draw();
+        onProgress(Math.min(1, t / Math.max(1, player.duration)));
+        if (t >= player.duration) setTimeout(resolve, 1500);
+        else setTimeout(step, 1000 / 30);
+      };
+      step();
+    });
+    if (rec.state !== 'inactive') rec.stop();
+    await done;
+    if (encoderError) throw encoderError;
+    if (cancel.cancelled) return;
+    const actualMime = (chunks.find((chunk) => chunk.type)?.type || outputMime).split(';')[0].toLowerCase();
+    if (actualMime !== 'video/webm' && actualMime !== 'video/mp4') throw new Error(`The encoder returned an unsupported video type: ${actualMime || 'unknown'}.`);
+    const ext = actualMime === 'video/mp4' ? 'mp4' : 'webm';
+    download(new Blob(chunks, { type: actualMime }), `${safeName(doc.name)}-replay.${ext}`);
+    toast(`Replay ${ext.toUpperCase()} video exported`, 'success');
+  } finally {
+    stream.getTracks().forEach((track) => track.stop());
+  }
 }

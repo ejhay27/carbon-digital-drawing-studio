@@ -236,7 +236,8 @@ export function parseBrushImport(text: string, existing: BrushParams[]) {
   let duplicates = 0;
   for (const raw of data.brushes as Partial<BrushParams>[]) {
     if (!raw || typeof raw !== 'object') continue;
-    const b: BrushParams = { ...BASE, ...raw, id: uid('cb-'), name: String(raw.name || 'Imported Brush'), category: String(raw.category || 'Imported'), tags: Array.isArray(raw.tags) ? raw.tags.map(String) : ['imported'], description: String(raw.description || ''), builtin: false };
+    const sourceTags = Array.isArray(raw.tags) ? raw.tags.map(String).map((tag) => tag.slice(0, 40)).slice(0, 11) : [];
+    const b: BrushParams = { ...BASE, ...raw, id: uid('cb-'), name: String(raw.name || 'Imported Brush'), category: String(raw.category || 'Imported'), tags: [...new Set([...sourceTags, 'imported'])].slice(0, 12), description: String(raw.description || ''), builtin: false };
     if (!VALID_TIPS.includes(b.tip)) {
       warnings.push(`"${b.name}": unknown tip "${b.tip}" — replaced with round.`);
       b.tip = 'round';

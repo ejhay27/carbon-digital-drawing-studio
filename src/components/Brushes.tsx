@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Copy, Download, FolderPlus, RotateCcw, Save, Search, Star, Trash2, Upload } from 'lucide-react';
 import type { BrushParams, GrainType, TipShape } from '../engine/types';
 import { CATEGORIES, exportBrushes, parseBrushImport, searchBrushes } from '../engine/brushes';
+import { installedPacks } from '../engine/brushPacks';
 import { brushPreview, renderStroke, sampleCurve } from '../engine/strokeRenderer';
 import { ensureStamp, missingStamps } from '../engine/tips';
 import { blobToDataURL, download, uid } from '../engine/util';
 import { allBrushes, brushById, confirmDialog, currentBrush, getApp, selectBrush, setApp, toast, updateBrush, useApp } from '../state/store';
 import { pickFile } from '../state/actions';
+import { removeImportedBrushFromPack } from '../win/WinOverlay';
 import { Btn, SectionTitle, Select, Slider, Toggle } from './ui';
 import { cn } from '../utils/cn';
 
@@ -39,7 +41,47 @@ export function duplicateCurrent() {
   toast(`Created “${nb.name}”${eraser ? ' eraser tip' : ''}`, 'success');
 }
 
-function BrushRow({ b, active, fav }: { b: BrushParams; active: boolean; fav: boolean }) {
+async function exportThenRemoveBrush(brush: BrushParams) {
+  const filename = `carbon-${brush.name.replace(/[^a-z0-9_-]+/gi, '-').slice(0, 48) || 'brush'}`;
+  try { exportBrushList([brush], filename); }
+  catch (error) { toast(`Could not export brush: ${error instanceof Error ? error.message : String(error)}`, 'error'); return; }
+
+  const sourcePack = installedPacks().find((pack) => pack.source !== 'catalog' && pack.brushes?.some((item) => item.id === brush.id));
+  const answer = await confirmDialog(`Remove “${brush.name}” after export?`, sourcePack
+    ? `The single-brush export has been started. Removing this brush rewrites “${sourcePack.name}”; the pack’s other brushes stay installed.`
+    : 'The single-brush export has been started. Remove this local brush preset from this device? Existing artwork is not changed.', [
+    { label: 'Keep brush', value: 'n' }, { label: 'Remove brush', value: 'y', variant: 'danger' },
+  ]);
+  if (answer !== 'y') return;
+
+  try {
+    if (sourcePack) {
+      const result = await removeImportedBrushFromPack(brush.id);
+      toast(`Exported and removed “${brush.name}” · ${result.remainingBrushes} brush${result.remainingBrushes === 1 ? '' : 'es'} remain in “${result.name}”.`, 'success');
+      return;
+    }
+    const state = getApp();
+    if (!state.customBrushes.some((item) => item.id === brush.id) && !state.customErasers.some((item) => item.id === brush.id)) {
+      toast('This brush is no longer in local storage.', 'error');
+      return;
+    }
+    const overrides = { ...state.overrides };
+    delete overrides[brush.id];
+    setApp({
+      customBrushes: state.customBrushes.filter((item) => item.id !== brush.id),
+      customErasers: state.customErasers.filter((item) => item.id !== brush.id),
+      overrides,
+      favorites: state.favorites.filter((id) => id !== brush.id),
+      recentBrushes: state.recentBrushes.filter((id) => id !== brush.id),
+      collections: state.collections.map((collection) => ({ ...collection, ids: collection.ids.filter((id) => id !== brush.id) })),
+      brushId: state.brushId === brush.id ? 'pencil-hb' : state.brushId,
+      eraserBrushId: state.eraserBrushId === brush.id ? 'eraser-hard' : state.eraserBrushId,
+    });
+    toast(`Exported and removed “${brush.name}”.`, 'success');
+  } catch (error) { toast(`Export completed, but removal failed: ${error instanceof Error ? error.message : String(error)}`, 'error'); }
+}
+
+function BrushRow({ b, active, fav, imported }: { b: BrushParams; active: boolean; fav: boolean; imported: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
@@ -74,8 +116,9 @@ function BrushRow({ b, active, fav }: { b: BrushParams; active: boolean; fav: bo
           {b.name}
           {missing && <AlertTriangle size={11} className="text-amber-400" aria-label="Missing stamp asset" />}
         </div>
-        <div className="truncate text-[9px] uppercase tracking-wide text-neutral-500">{b.builtin ? b.category : 'Custom · ' + b.category} · {b.mode === 'crisp' ? 'Crisp Ink' : b.mode}</div>
+        <div className="truncate text-[9px] uppercase tracking-wide text-neutral-500">{imported ? 'Imported · ' + b.category : b.builtin ? b.category : 'Custom · ' + b.category} · {b.mode === 'crisp' ? 'Crisp Ink' : b.mode}</div>
       </div>
+      {imported && <button title="Export this brush, then optionally remove it" onClick={(event) => { event.stopPropagation(); void exportThenRemoveBrush(b); }} className="text-neutral-500 hover:text-white"><Download size={12} /></button>}
       <button
         title={fav ? 'Remove from favorites' : 'Add to favorites'}
         onClick={(e) => { e.stopPropagation(); const f = getApp().favorites; setApp({ favorites: fav ? f.filter((x) => x !== b.id) : [...f, b.id] }); }}
@@ -94,17 +137,23 @@ export function BrushLibrary() {
   const [cat, setCat] = useState<string>('All');
   const eraser = s.tool === 'eraser';
   const activeId = eraser ? s.eraserBrushId : s.brushId;
+  const importedIds = new Set([
+    ...installedPacks().filter((pack) => pack.source !== 'catalog').flatMap((pack) => (pack.brushes || []).map((brush) => brush.id)),
+    ...[...s.customBrushes, ...s.customErasers].filter((brush) => brush.tags?.some((tag) => tag.toLowerCase() === 'imported') || brush.category.toLowerCase() === 'imported').map((brush) => brush.id),
+  ]);
+  const importedCount = importedIds.size;
   let list = allBrushes(s).map((b) => ({ ...b, ...(s.overrides[b.id] || {}) }));
   if (filter === 'fav') list = list.filter((b) => s.favorites.includes(b.id));
   else if (filter === 'recent') list = s.recentBrushes.map((id) => list.find((b) => b.id === id)).filter(Boolean) as BrushParams[];
   else if (filter === 'custom') list = list.filter((b) => !b.builtin);
+  else if (filter === 'imported') list = list.filter((b) => importedIds.has(b.id));
   else if (filter.startsWith('col-')) {
     const c = s.collections.find((x) => x.id === filter);
     list = list.filter((b) => c?.ids.includes(b.id));
   }
   if (cat !== 'All') list = list.filter((b) => b.category === cat);
   list = searchBrushes(list, q);
-  const cats = ['All', ...CATEGORIES, ...Array.from(new Set([...s.customBrushes, ...s.customErasers].map((b) => b.category))).filter((c) => !(CATEGORIES as readonly string[]).includes(c))];
+  const cats = ['All', ...new Set([...CATEGORIES, ...allBrushes(s).map((brush) => brush.category)].filter((category) => category !== 'All'))];
   const current = brushById(activeId);
 
   return (
@@ -115,25 +164,36 @@ export function BrushLibrary() {
         <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.stopPropagation()} placeholder={`Search ${allBrushes(s).length} brushes…`} className="w-full bg-transparent py-1.5 text-[11px] text-neutral-100 outline-none" />
       </div>
       <div className="flex flex-wrap gap-1">
-        {[['all', 'All'], ['fav', 'Favorites'], ['recent', 'Recent'], ['custom', 'Custom']].map(([k, l]) => <Btn key={k} active={filter === k} onClick={() => setFilter(k)}>{l}</Btn>)}
+        {[['all', 'All'], ['fav', 'Favorites'], ['recent', 'Recent'], ['custom', 'Custom'], ['imported', `Imported · ${importedCount}`]].map(([k, l]) => <Btn key={k} active={filter === k} onClick={() => setFilter(k)}>{l}</Btn>)}
         {s.collections.map((c) => <Btn key={c.id} active={filter === c.id} onClick={() => setFilter(c.id)}>{c.name}</Btn>)}
       </div>
       <Select value={cat} onChange={setCat} options={cats.map((c) => ({ value: c, label: c }))} />
+      {filter === 'imported' && <div className="flex items-center justify-between"><SectionTitle>Imported Brushes</SectionTitle><span className="text-[10px] text-neutral-500">{list.length} available</span></div>}
       <div className="max-h-[300px] space-y-0.5 overflow-y-auto pr-0.5">
-        {list.map((b) => <BrushRow key={b.id + JSON.stringify(s.overrides[b.id] || {})} b={b} active={b.id === activeId} fav={s.favorites.includes(b.id)} />)}
+        {list.map((b) => <BrushRow key={b.id + JSON.stringify(s.overrides[b.id] || {})} b={b} active={b.id === activeId} fav={s.favorites.includes(b.id)} imported={importedIds.has(b.id)} />)}
         {!list.length && <div className="py-4 text-center text-[11px] text-neutral-500">No brushes match.</div>}
       </div>
       <div className="flex flex-wrap gap-1 border-t border-white/5 pt-2">
         <Btn title="Duplicate current brush as a custom preset" onClick={duplicateCurrent}><Copy size={11} /> Duplicate</Btn>
         {current && !current.builtin && (
-          <Btn title="Delete custom brush or eraser" onClick={async () => {
-            const answer = await confirmDialog(`Delete “${current.name}”?`, 'The custom brush/eraser will be removed from this device. Existing artwork is not changed.', [
+          <Btn title="Delete custom or imported brush" onClick={async () => {
+            const sourcePack = installedPacks().find((pack) => pack.source !== 'catalog' && pack.brushes?.some((brush) => brush.id === current.id));
+            const answer = await confirmDialog(`Delete “${current.name}”?`, sourcePack
+              ? `This removes only this brush from “${sourcePack.name}”; the pack’s other brushes stay installed. Existing artwork is not changed.`
+              : 'The custom brush/eraser will be removed from this device. Existing artwork is not changed.', [
               { label: 'Keep', value: 'n' }, { label: 'Delete', value: 'y', variant: 'danger' },
             ]);
-            if (answer === 'y') {
-              setApp({ customBrushes: s.customBrushes.filter((b) => b.id !== current.id), customErasers: s.customErasers.filter((b) => b.id !== current.id), favorites: s.favorites.filter((x) => x !== current.id), recentBrushes: s.recentBrushes.filter((x) => x !== current.id), collections: s.collections.map((collection) => ({ ...collection, ids: collection.ids.filter((x) => x !== current.id) })), brushId: eraser ? s.brushId : 'pencil-hb', eraserBrushId: eraser ? 'eraser-hard' : s.eraserBrushId });
+            if (answer !== 'y') return;
+            try {
+              if (sourcePack) await removeImportedBrushFromPack(current.id);
+              else {
+                const latest = getApp();
+                if (!latest.customBrushes.some((brush) => brush.id === current.id) && !latest.customErasers.some((brush) => brush.id === current.id)) return toast('This brush is no longer in local storage.', 'error');
+                const overrides = { ...latest.overrides }; delete overrides[current.id];
+                setApp({ customBrushes: latest.customBrushes.filter((brush) => brush.id !== current.id), customErasers: latest.customErasers.filter((brush) => brush.id !== current.id), overrides, favorites: latest.favorites.filter((id) => id !== current.id), recentBrushes: latest.recentBrushes.filter((id) => id !== current.id), collections: latest.collections.map((collection) => ({ ...collection, ids: collection.ids.filter((id) => id !== current.id) })), brushId: latest.brushId === current.id ? 'pencil-hb' : latest.brushId, eraserBrushId: latest.eraserBrushId === current.id ? 'eraser-hard' : latest.eraserBrushId });
+              }
               toast(`Deleted “${current.name}”`);
-            }
+            } catch (error) { toast(`Could not remove brush: ${error instanceof Error ? error.message : String(error)}`, 'error'); }
           }}><Trash2 size={11} /></Btn>
         )}
         <Select value="" onChange={(v) => {

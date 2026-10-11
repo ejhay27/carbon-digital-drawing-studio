@@ -1,25 +1,34 @@
 # Carbon: Prime — 7.x+ls release documentation
 
-**Product:** Carbon: Prime · **Tagline:** Where all starts begin. · **Current local source candidate:** `7.5.1+ls`
+**Product:** Carbon: Prime · **Tagline:** Where all starts begin. · **Current local source candidate:** `7.6.0+ls`
 (`+ls` = Local Storage). The release line is **7.x+ls**; it is never renamed to Carbon 8.
 
-The 7.5.1+ls source candidate adds local-first brush asset storage, safe bundled Marketplace
-workflows, bounded QR brush sharing, draft-based Brush Lab and Custom Eraser Studio. It is not a
-published release. The earlier 7.1.0/7.1.1 implementation history remains below as historical
-context; current code and verification limits are recorded in
-[`AUDIT-CURRENT-7.1.1+ls.md`](AUDIT-CURRENT-7.1.1+ls.md). No Windows installer, Android APK or
-end-to-end browser/platform acceptance is claimed.
+The 7.6.0+ls source candidate improves event-based Drawing Replay, pause preservation, local recovery,
+My Illustrations recording controls and export-format clarity. It is not a published release. Version
+metadata is now 7.6.0 for Windows/desktop only; Android remains separately identified as CARBON 1.0.0.
+See [`AUDIT-7.6.0-candidate.md`](AUDIT-7.6.0-candidate.md) for the source audit, verified changes,
+platform limits and next steps. No Windows installer, Android APK or end-to-end browser/platform
+acceptance is claimed.
 
 ---
 
-## Current local source candidate — 7.5.1+ls
+## Current local source candidate — 7.6.0+ls
+
+- **Drawing Replay:** document-command and sampled-stroke replay preserves real gaps by default. Optional pause shortening is off until enabled. Pointer-up/cancel input keeps terminal samples; no idle frames, UI, cursor, screen, microphone or camera are captured.
+- **Automatic local capture:** when enabled, new projects and opened projects with no replay history start with a project-associated checkpoint. Committed document changes schedule a debounced IndexedDB recovery snapshot in addition to periodic/lifecycle saves.
+- **Replay management:** My Illustrations is available from Home and File → My Illustrations while a document is open. Its recent-project and Android device-file cards open a project's Replay & recording panel. Per-document start/pause/resume/stop and separately confirmed delete-history controls remain distinct from artwork; stopping preserves history, and deleting history does not delete layers.
+- **Distinct exports:** `.carbon` saves/copies contain editable artwork plus native replay events. The image exporter writes flattened PNG/JPEG/WebP. Video export uses only the selected WebM/MP4 type returned by a supported MediaRecorder; it does not transcode or relabel.
+- **Limits:** older timelines whose pauses were already shortened cannot regain lost time. 3D Studio and Orbit Board edits are not in the 2D replay event stream. Recorder memory is estimated, not an exact archive-size measurement.
+- **Verification:** 319 Node assertions, strict TypeScript check, single-file Vite build, and whitespace validation pass (Vite 7.3.2; 2,056 modules; 2,023.64 kB / 697.78 kB gzip). Browser interaction, Windows installer/runtime, Android APK/device, QR image decode and actual video encoders remain unverified; see the audit report.
+
+## Previous local source candidate — 7.5.1+ls
 
 - **Brush Marketplace:** bundled packs remain available offline. Pack import/export and local storage use validated definitions; no remote catalog host is configured, so the UI clearly reports remote packs unavailable rather than faking downloads, ratings or popularity.
 - **Shared asset storage:** brush-pack bytes and metadata are stored through a local IndexedDB asset store with configurable per-pack and total-install limits, hard size checks, browser-origin storage estimates and installed/input byte reporting. Project artwork remains in its existing project-storage paths.
-- **QR brush sharing/import:** a versioned `carbon-brush-qr` payload is limited to 1,800 UTF-8 bytes. The UI creates PNG and text shares, decodes QR image files locally and offers an explicit camera flow. Arbitrary URLs are rejected; stamped or oversized brush packs use `.carbonpack` instead. Camera decoding and device/browser acceptance remain unverified.
+- **QR brush sharing/import:** a versioned `carbon-brush-qr` payload is limited to 1,800 UTF-8 bytes. The UI creates PNG and text shares and decodes a user-selected QR image locally without camera access; a brush from the imported pack is selected for immediate use. The Brushes panel has an Imported Brushes section; a brush can be exported individually and then optionally removed while preserving its pack's other brushes. Arbitrary URLs are rejected; stamped or oversized brush packs use `.carbonpack` instead. End-to-end browser acceptance remains unverified.
 - **Brush Lab and Custom Eraser Studio:** draft parameter edits and preview use the actual brush engine; saved user brushes and custom eraser tips are separate local presets. Eraser tips are selected only while Eraser is active. Destructive deletion confirms and cleans up references without modifying artwork.
 - **Compatibility/version:** Windows/desktop source metadata is `7.5.1+ls`, with bare package version `7.5.1`. Android remains separately identified as `CARBON 1.0.0`; the `.carbon` archive/manifest format is unchanged.
-- **Local-only status:** no release is published. QR camera scanning, brush save/use flows, visuals, accessibility, Help → Run Diagnostics, Windows packaging/runtime and Android build/device acceptance remain outstanding.
+- **Local-only status:** no release is published. QR image scanning, brush save/use flows, visuals, accessibility, Help → Run Diagnostics, Windows packaging/runtime and Android build/device acceptance remain outstanding.
 - **Remaining roadmap:** a complete unified user asset manager, local illustration browser/OS-folder workflows, Home visual/performance acceptance and expanded platform testing are not completed by this source candidate.
 
 ## 1. Historical 7.1.0+ls source foundation

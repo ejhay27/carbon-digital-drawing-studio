@@ -15,15 +15,15 @@ Defaults are **100 MB per import/download** and **500 MB of installed brush pack
 
 The storage screen reports exact UTF-8 JSON byte counts for the installed canonical pack and, for imports/remote packs, the size of the selected/downloaded input separately. Bundled packs are marked as local with no network download. A brush row reports its individual JSON definition byte count, not a compressed image or standalone file.
 
-Removal requires confirmation. It removes the selected installed pack/asset record but does not rewrite project files or remove user-created custom brushes. Existing artwork strokes remain encoded in their own documents. The storage screen also exposes pack export and confirmed cleanup of unregistered/orphaned pack records.
+The Brush Library has an **Imported Brushes** section for locally imported brush files and imported/remote packs. Each imported brush can be exported as a one-brush `.carbonbrush` file and then optionally removed. Removing one pack brush rewrites only that pack in IndexedDB, preserves the remaining brush IDs, and removes the pack only when its last brush is removed. Destructive choices require confirmation, and selection/favorite/recent/collection references are cleaned up; existing artwork strokes are not rewritten. The Storage screen also exposes full-pack export/removal and confirmed cleanup of unregistered/orphaned pack records.
 
 ## QR brush sharing and import
 
-The Brush Library can encode an individual brush as a local Carbon QR payload, save that code as PNG, copy its text, or open the operating-system share chooser. A QR image may be selected for local decoding, and a camera can be started only after an explicit click/permission request. Camera tracks are stopped when the scan finishes or the modal closes. QR/image decoding never sends data to a server and never auto-opens scanned URLs; only the strict `carbon-brush-qr` v1 JSON schema is accepted.
+The Brush Library can encode an individual brush as a local Carbon QR payload, save that code as PNG, copy its text, or open the operating-system share chooser. For import, the user selects an existing QR image; Carbon decodes it locally without requesting camera access, then validates and installs the brush and selects it for use. QR decoding never sends data to a server and never auto-opens scanned URLs; only the strict `carbon-brush-qr` v1 JSON schema is accepted.
 
 QR text is capped at **1,800 UTF-8 bytes** for practical screen-to-screen scanning. Brushes with embedded stamp images and larger payloads must use `.carbonpack` export/import instead; the app will refuse, not silently truncate, those images. Decoded brush data goes through the ordinary brush-pack format/engine/size/duplicate validator and is persisted to the same IndexedDB asset store. The UI imports one-brush shares; the schema can contain a compact pack.
 
-Camera access is browser/runtime-dependent and has not been platform-acceptance-tested on Windows or Android. Choosing a QR image file is the fallback path where camera access is unavailable.
+QR-image decoding is implemented in the browser UI but has not been manually tested end to end across browser and platform runtimes. The QR import path does not access the camera.
 
 ## Optional remote catalog contract
 

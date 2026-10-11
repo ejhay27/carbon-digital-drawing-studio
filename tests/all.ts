@@ -9,16 +9,17 @@ import {
 } from '../src/version';
 import { RELEASES } from '../src/release/releases';
 import * as THREE from 'three';
-import { DocEngine } from '../src/engine/document';
+import { DocEngine, Recorder, eventBytes } from '../src/engine/document';
+import { appendRecordedSample } from '../src/engine/recording';
 import { ABOUT_CREATOR, ABOUT_PROJECT_COPY } from '../src/components/aboutCopy';
 import { replaceProjectFile, type ProjectFileSystem } from '../src/platform/safeProjectWrite';
 import { createTouchGestureGate } from '../src/win/touchGestureGate';
 import {
   DEFAULT_VIEW, applyMat, colorLuminance, curvePath, defaultScene, localizeSurfaceNormal, localizeSurfaceStroke, makeGrid, persistSceneCamera, projectSurfaceSymmetryPaths, remapSurfaceNormals, sceneOf, simplify3, smooth3, surfaceHit, symMatrices,
 } from '../src/win/sceneRender';
-import { buildPresets, ENGINE_VERSION } from '../src/engine/brushes';
+import { buildPresets, ENGINE_VERSION, exportBrushes, parseBrushImport } from '../src/engine/brushes';
 import { brushFingerprint } from '../src/engine/brushes';
-import { DEFAULT_MAX_BRUSH_PACK_BYTES, exportPack, parsePack } from '../src/engine/brushPacks';
+import { DEFAULT_MAX_BRUSH_PACK_BYTES, exportPack, parsePack, withoutInstalledPackBrush } from '../src/engine/brushPacks';
 import { downloadRemoteBrushPack, formatAssetSize, measureBrushDefinitionBytes, measureBrushPackBytes, megabytesToBytes, parseRemoteAssetCatalog, type RemoteBrushPack } from '../src/engine/assetStore';
 import { MAX_BRUSH_QR_BYTES, makeBrushQrPayload, parseBrushQrPayload } from '../src/engine/brushQR';
 import { MIME, FORMAT_VERSION, isComicArchive, verifyBytes } from '../src/engine/fileFormat';
@@ -67,6 +68,7 @@ ok(!!first, 'release notes are bundled');
 if (first) {
   eq(first.version, WINDOWS_VERSION, 'release notes start at the running version');
   eq(first.suffix, LS_SUFFIX, 'current release carries the +ls suffix');
+  eq(first.status, 'candidate', 'unpublished build is explicitly labeled a source candidate');
   ok(first.date === null || /^\d{4}-\d{2}-\d{2}$/.test(first.date), 'release date is ISO or null');
   ok(first.features.length + first.improvements.length + first.fixes.length > 0, 'release notes list actual changes');
 }
@@ -79,6 +81,40 @@ for (let i = 0; i < RELEASES.length; i++) {
   if (i) ok(compareSemver(RELEASES[i - 1].version, r.version) > 0, 'releases are ordered newest first');
 }
 ok(RELEASES.some((r) => r.version === '2.0.0' && /3D/i.test(r.title)), '2.0.0 remains the 3D Studio major release');
+
+// ---------------------------------------------------------------- Drawing Replay timing, input capture & sizing
+section('Drawing Replay timing, terminal samples and conservative sizing');
+const replayClock = new Recorder();
+replayClock.time = 25;
+replayClock.lastWall = 0;
+replayClock.idleCap = Number.MAX_SAFE_INTEGER;
+eq(replayClock.clockAt(15_000), 15_025, 'replay clock preserves a long real-time pause by default');
+replayClock.time = 0;
+replayClock.lastWall = 1_000;
+replayClock.idleCap = 2_500;
+eq(replayClock.clockAt(20_000), 2_500, 'optional pause shortening still respects the configured cap');
+const capturedSamples = [10, 20, 0.7, 0, 0, 12];
+appendRecordedSample(capturedSamples, [14, 26, 0, 8, -4, 8], true);
+eq(capturedSamples.slice(-6), [14, 26, 0.7, 8, -4, 12], 'pointer-up terminal sample keeps time monotonic and avoids zero-pressure taper');
+ok(appendRecordedSample(capturedSamples, [14, 26, 0.7, 8, -4, 12]) === false, 'exact duplicate terminal samples are not added');
+const estimatedStrokeBytes = eventBytes({ t: 0, c: { k: 'stroke', s: new Array(600).fill(0), brush: {} } as never }, 64, 64);
+ok(estimatedStrokeBytes >= 600 * 16, 'stroke sample estimate includes conservative in-memory overhead');
+ok(DEFAULT_SETTINGS.compressReplayPauses === false && mergeSettings({}).compressReplayPauses === false, 'pause compression is disabled for new and migrated preferences');
+eq(mergeSettings({ compressReplayPauses: true }).compressReplayPauses, true, 'explicit pause-compression choice survives settings migration');
+const recordingControls = new DocEngine(16, 16);
+recordingControls.startRecording();
+ok(recordingControls.rec.enabled && recordingControls.rec.active, 'start enables event capture');
+recordingControls.pauseRecording();
+ok(recordingControls.rec.enabled && recordingControls.rec.paused && !recordingControls.rec.active, 'pause stops capture without disabling or deleting the replay');
+recordingControls.resumeRecording();
+ok(recordingControls.rec.active, 'resume restarts capture');
+const historyBeforeStop = recordingControls.rec.events.length;
+recordingControls.stopRecording();
+ok(!recordingControls.rec.enabled && recordingControls.rec.events.length === historyBeforeStop, 'stop disables capture while preserving replay history');
+recordingControls.startRecording();
+ok(recordingControls.rec.active && recordingControls.rec.events.length > historyBeforeStop, 'recording can be started again and appends a new checkpoint');
+recordingControls.clearRecording();
+ok(!recordingControls.rec.events.length && !recordingControls.rec.enabled, 'confirmed deletion clears only replay state');
 
 // ---------------------------------------------------------------- 2. Home project finder, preferences & command palette
 section('Home project finder, pinning, sorting and command palette search');
@@ -434,9 +470,19 @@ const { builtin: _assetBuiltin, ...assetDefinition } = assetBrush;
 eq(measureBrushDefinitionBytes(assetBrush), new TextEncoder().encode(JSON.stringify(assetDefinition)).byteLength, 'individual brush definition reports exact UTF-8 JSON bytes');
 eq(measureBrushPackBytes({ id: assetId, name: assetName, category: assetCategory, version: 2, brushes: [assetBrush] }), assetBytes.byteLength, 'pack size matches its serialized installed asset');
 const importedOnce = parsePack(assetJson, []);
+ok(importedOnce.pack.brushes?.[0]?.tags.includes('imported'), 'pack imports are tagged for the Imported Brushes section');
+const looseImported = parseBrushImport(exportBrushes([assetBrush]), []);
+ok(looseImported.added[0]?.tags.includes('imported'), 'standalone brush imports are tagged for the Imported Brushes section');
 const reserialized = exportPack(importedOnce.pack.name, importedOnce.pack.brushes || [], importedOnce.pack.id, importedOnce.pack.category, importedOnce.pack.version);
 const importedAgain = parsePack(reserialized, []);
 eq(importedAgain.pack.brushes?.map((b) => b.id), importedOnce.pack.brushes?.map((b) => b.id), 'brush IDs remain stable across safe pack store/reload');
+const multiImportedPack = { ...importedOnce.pack, brushes: [...(importedOnce.pack.brushes || []), { ...importedOnce.pack.brushes![0], id: 'ip-remote-sketch-tools-extra' }] };
+const keptPack = withoutInstalledPackBrush(multiImportedPack, multiImportedPack.brushes[0].id);
+eq(keptPack?.brushes?.map((brush) => brush.id), ['ip-remote-sketch-tools-extra'], 'removing one imported brush preserves the rest of its pack');
+const keptPackReload = parsePack(exportPack(keptPack!.name, keptPack!.brushes!, keptPack!.id, keptPack!.category, keptPack!.version), []);
+eq(keptPackReload.pack.brushes?.map((brush) => brush.id), keptPack?.brushes?.map((brush) => brush.id), 'rewriting a pack after removal preserves remaining imported brush IDs across restart');
+eq(withoutInstalledPackBrush(importedOnce.pack, importedOnce.pack.brushes![0].id), null, 'removing the last imported brush marks its empty pack for cleanup');
+throws(() => withoutInstalledPackBrush({ ...importedOnce.pack, source: 'catalog' }, importedOnce.pack.brushes![0].id), 'bundled catalog brushes cannot be removed individually');
 throws(() => parsePack(assetJson, [], 8), 'pack parser enforces a configurable UTF-8 byte limit');
 const unsupportedEngine = JSON.parse(assetJson) as Record<string, unknown>;
 unsupportedEngine.engine = ENGINE_VERSION + 1;

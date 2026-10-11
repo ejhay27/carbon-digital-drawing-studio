@@ -59,8 +59,10 @@ function Header({ r, current }: { r: Release; current: boolean }) {
     <div className="flex flex-wrap items-center gap-2">
       <span className="font-mono text-sm font-semibold text-neutral-100">v{r.version}{r.suffix || ''}</span>
       <span className={cn('rounded border px-1.5 py-0.5 text-[10px] font-medium', CAT[r.category].chip)}>{CAT[r.category].label}</span>
-      {current && <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-neutral-200">Current build</span>}
-      <span className="text-[11px] text-neutral-500">{fmtDate(r.date)}</span>
+      {current && <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-neutral-200">{r.status === 'candidate' ? 'Current candidate' : 'Current build'}</span>}
+      {r.status === 'candidate'
+        ? <span className="text-[11px] text-amber-300">Unpublished source candidate</span>
+        : <span className="text-[11px] text-neutral-500">{fmtDate(r.date)}</span>}
     </div>
   );
 }
@@ -74,7 +76,7 @@ export function LatestPatches() {
     <section aria-labelledby="latest-patches" className="rounded-xl border border-white/10 bg-white/[0.02]">
       <div className="flex flex-wrap items-center gap-2 border-b border-white/5 px-4 py-2.5">
         <h3 id="latest-patches" className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400"><History size={12} /> Latest Patches</h3>
-        <span className="text-[10px] text-neutral-600">Installed: CARBON PRIME {APP_VERSION} (Windows)</span>
+        <span className="text-[10px] text-neutral-600">Build identity: CARBON PRIME {APP_VERSION} (Windows)</span>
         <div className="flex-1" />
         {!online && <span className="flex items-center gap-1 rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-neutral-400" title="You're offline. Release notes are bundled with the app, so they still work."><WifiOff size={10} /> Offline: notes bundled with this build</span>}
         <Btn onClick={() => setApp({ dialog: 'patches' })} disabled={!RELEASES.length}>View all updates</Btn>
@@ -99,14 +101,14 @@ export function LatestPatches() {
   );
 }
 
-/** View All Updates: chronological release history (newest first). */
+/** View All Updates: chronological shipped releases and explicitly marked local source candidates. */
 export function PatchesDialog() {
   const [filter, setFilter] = useState<'all' | ReleaseCategory>('all');
   const [open, setOpen] = useState<string | null>(RELEASES[0]?.version || null);
   const online = useOnline();
   const list = RELEASES.filter((r) => filter === 'all' || r.category === filter);
   return (
-    <Modal title="All updates: CARBON for Windows" onClose={() => setApp({ dialog: null })} width={720}>
+    <Modal title="All updates & source candidates: CARBON for Windows" onClose={() => setApp({ dialog: null })} width={720}>
       <div className="mb-3 flex flex-wrap items-center gap-1">
         <Btn active={filter === 'all'} onClick={() => setFilter('all')}>All ({RELEASES.length})</Btn>
         {(Object.keys(CAT) as ReleaseCategory[]).map((c) => (
@@ -116,7 +118,7 @@ export function PatchesDialog() {
         ))}
       </div>
       <p className="mb-4 text-[11px] text-neutral-500">
-        Installed version: <b className="text-neutral-300">{APP_VERSION}</b>. These notes ship with the app and work offline{!online && ' (you are offline right now)'}. CARBON doesn't download or install updates automatically.
+        Build identity: <b className="text-neutral-300">{APP_VERSION}</b>. Notes are bundled with this app and work offline{!online && ' (you are offline right now)'}. Entries labeled “Unpublished source candidate” are not published releases. CARBON doesn't download or install updates automatically.
       </p>
       {!list.length ? (
         <p className="py-8 text-center text-xs text-neutral-500">{RELEASES.length ? 'No releases in this category yet.' : 'No release notes are bundled with this build.'}</p>

@@ -24,7 +24,7 @@ import { brushPreview } from '../engine/strokeRenderer';
 import { serializeComic, serializeDoc, deserializeDoc } from '../engine/fileFormat';
 import { canvasToBlob, createCanvas, ctxOf, download, hexToRgb, isHex, normHex, rgbToHex, uid } from '../engine/util';
 import type { AdjustParams, BalloonStyle, BrushParams, ComicBalloon, ComicFx, ComicFxKind, ComicObject, ComicPanel } from '../engine/types';
-import { comicObjects, GRADIENT_PRESETS, liqCancel, liqCommit, liqReset, setComicObjects, setWin, updateComicObject, useWin, type ComicMode, type Workspace } from './WinOverlay';
+import { comicObjects, GRADIENT_PRESETS, liqCancel, liqCommit, liqReset, removeImportedBrushFromPack, setComicObjects, setWin, updateComicObject, useWin, type ComicMode, type Workspace } from './WinOverlay';
 import { Btn, Modal, NumInput, SectionTitle, Select, Slider, Toggle } from '../components/ui';
 import { LayoutDashboard } from 'lucide-react';
 import { LayerLinkTools, PanelCapture } from './Continuum';
@@ -517,7 +517,7 @@ export function ComicPanel() {
       <div className="flex flex-wrap gap-1">
         <Select value={layout} onChange={setLayout} options={LAYOUTS.map((l) => ({ value: l.id, label: l.name }))} />
         <Btn onClick={() => { const np = makePage(cm.name, cm.id, pages.length, d.width, d.height, cm.bleed, cm.safe, layout, c.gutter); np.dirty = true; addDoc(np); }}><Plus size={11} /> Page</Btn>
-        <Btn onClick={async () => { const n = await deserializeDoc(await serializeDoc(d)); n.comic = { ...cm, index: pages.length, pageName: cm.pageName + ' copy' }; n.meta.uuid = uid('cbn-'); n.meta.lineage = ''; n.name = d.name + ' copy'; n.dirty = true; addDoc(n, false); }}><Copy size={11} /></Btn>
+        <Btn onClick={async () => { const n = await deserializeDoc(await serializeDoc(d)); n.comic = { ...cm, index: pages.length, pageName: cm.pageName + ' copy' }; n.meta.uuid = uid('cbn-'); n.meta.lineage = ''; n.name = d.name + ' copy'; n.dirty = true; addDoc(n); }}><Copy size={11} /></Btn>
         <Btn disabled={pages.indexOf(d) <= 0} onClick={() => { const l = [...pages]; const i = l.indexOf(d); [l[i - 1], l[i]] = [l[i], l[i - 1]]; reindex(l); setApp({ tick: getApp().tick + 1 }); }}>◀</Btn>
         <Btn disabled={pages.indexOf(d) >= pages.length - 1} onClick={() => { const l = [...pages]; const i = l.indexOf(d); [l[i + 1], l[i]] = [l[i], l[i + 1]]; reindex(l); setApp({ tick: getApp().tick + 1 }); }}>▶</Btn>
         <Btn disabled={pages.length <= 1} onClick={async () => { const r = await confirmDialog('Delete page?', `“${cm.pageName}” and its artwork will be removed from the project.`, [{ label: 'Cancel', value: 'n' }, { label: 'Delete', value: 'y', variant: 'danger' }]); if (r === 'y') { await closeDoc(d.id, true); reindex(comicPages(cm.id)); } }}><Trash2 size={11} /></Btn>
@@ -786,8 +786,13 @@ export function BrushMarket() {
       if (!await checkCapacity(size, pack.id)) return 'The pack was not installed because a configured storage limit or browser quota was reached.';
       await storeBrushPackAsset({ ...pack, source: 'import', brushes: pack.brushes || [], downloadBytes: new TextEncoder().encode(payload).byteLength }, installLimitBytes);
       setWin({ packs: [...useWin.getState().packs.filter((item) => item.id !== pack.id), pack] });
+      const firstImportedBrush = pack.brushes?.[0];
+      if (firstImportedBrush) {
+        if (getApp().tool === 'eraser') setTool('brush');
+        selectBrush(firstImportedBrush.id);
+      }
       await refresh();
-      toast(`Imported QR pack “${pack.name}” · ${pack.brushes?.length || 0} brushes${duplicates ? ` · ${duplicates} duplicates skipped` : ''}`, 'success');
+      toast(`Imported and selected a brush from QR pack “${pack.name}” · ${pack.brushes?.length || 0} brushes${duplicates ? ` · ${duplicates} duplicates skipped` : ''}`, 'success');
       warnings.slice(0, 3).forEach((warning) => toast(warning, 'error'));
       return null;
     } catch (error) { return errorText(error); }
@@ -1168,11 +1173,8 @@ function BrushQrDialog({ brush, onClose }: { brush: BrushParams; onClose: () => 
 }
 
 function BrushQrImportDialog({ onClose, onImport }: { onClose: () => void; onImport: (payload: string) => Promise<string | null> }) {
-  const [cameraOn, setCameraOn] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
   const processingRef = useRef(false);
   const onImportRef = useRef(onImport);
   onImportRef.current = onImport;
@@ -1180,7 +1182,7 @@ function BrushQrImportDialog({ onClose, onImport }: { onClose: () => void; onImp
   const consumePayload = async (payload: string) => {
     if (processingRef.current) return;
     processingRef.current = true;
-    setBusy(true); setError(''); setCameraOn(false);
+    setBusy(true); setError('');
     try {
       const reason = await onImportRef.current(payload);
       if (reason) setError(reason);
@@ -1213,64 +1215,14 @@ function BrushQrImportDialog({ onClose, onImport }: { onClose: () => void; onImp
     finally { bitmap?.close(); setBusy(false); }
   };
 
-  const startCamera = async () => {
-    setError('');
-    if (!navigator.mediaDevices?.getUserMedia) { setError('Camera scanning is not available in this browser context. Choose a QR image file instead.'); return; }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
-      const video = videoRef.current;
-      if (!video) { stream.getTracks().forEach((track) => track.stop()); throw new Error('Camera preview is unavailable.'); }
-      streamRef.current = stream;
-      video.srcObject = stream;
-      await video.play();
-      setCameraOn(true);
-    } catch (reason) { setError(`Camera could not start: ${errorText(reason)}. Choose a QR image file instead.`); }
-  };
-
-  useEffect(() => {
-    if (!cameraOn) return;
-    const video = videoRef.current;
-    const stream = streamRef.current;
-    if (!video || !stream) return;
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    if (!context) { setError('Camera image decoder is unavailable.'); return; }
-    let frame = 0;
-    let lastDecode = 0;
-    let stopped = false;
-    const scan = (time: number) => {
-      if (stopped) return;
-      if (time - lastDecode > 160 && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0 && !processingRef.current) {
-        lastDecode = time;
-        const scale = Math.min(1, 640 / Math.max(video.videoWidth, video.videoHeight));
-        canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-        canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-        const decoded = jsQR(pixels.data, pixels.width, pixels.height, { inversionAttempts: 'attemptBoth' });
-        if (decoded) { void consumePayload(decoded.data); return; }
-      }
-      frame = requestAnimationFrame(scan);
-    };
-    frame = requestAnimationFrame(scan);
-    return () => {
-      stopped = true;
-      cancelAnimationFrame(frame);
-      stream.getTracks().forEach((track) => track.stop());
-      if (video.srcObject === stream) video.srcObject = null;
-      if (streamRef.current === stream) streamRef.current = null;
-    };
-  }, [cameraOn]);
-
   return (
     <Modal title="Import a Carbon brush QR" width={560} onClose={onClose} footer={<Btn onClick={onClose} disabled={busy}>Close</Btn>}>
       <div className="space-y-3">
-        <p className="text-xs text-neutral-400">Scan a QR with the camera after granting permission, or choose a QR image file. Decoding happens locally. Only Carbon brush data is accepted; URLs are never opened.</p>
-        <video ref={videoRef} autoPlay playsInline muted className={cameraOn ? 'mx-auto max-h-64 w-full rounded bg-black object-contain' : 'hidden'} aria-label="Local QR camera preview" />
-        <div className="flex flex-wrap gap-2"><Btn disabled={busy || cameraOn} variant="primary" onClick={() => void chooseQrImage()}><QrCode size={12} /> Choose QR image</Btn><Btn disabled={busy || cameraOn} onClick={() => void startCamera()}>Start camera…</Btn>{cameraOn && <Btn onClick={() => setCameraOn(false)}><X size={12} /> Stop camera</Btn>}</div>
+        <p className="text-xs text-neutral-400">No camera is used. Choose a PNG, JPEG or WebP image containing a Carbon brush QR code; it is scanned locally and the brush is added to your Imported section. Arbitrary URLs are never opened.</p>
+        <div className="flex flex-wrap gap-2"><Btn disabled={busy} variant="primary" onClick={() => void chooseQrImage()}><QrCode size={12} /> Scan QR image</Btn></div>
         {busy && <div className="text-xs text-neutral-400">Validating brush data…</div>}
         {error && <div role="alert" className="rounded border border-red-500/30 bg-red-500/5 p-2 text-xs text-red-200">{error}</div>}
-        <div className="text-[10px] text-neutral-500">QR payloads are limited to {MAX_BRUSH_QR_BYTES} UTF-8 bytes. Packs containing stamp images or larger brush sets should use .carbonpack files. Camera and image data are not sent to a server.</div>
+        <div className="text-[10px] text-neutral-500">QR payloads are limited to {MAX_BRUSH_QR_BYTES} UTF-8 bytes. Packs containing stamp images or larger brush sets should use .carbonpack files. The selected image is decoded locally and is not sent to a server.</div>
       </div>
     </Modal>
   );
@@ -1281,6 +1233,7 @@ function LibItem({ b, grid, active, fav, modified, onQr }: { b: BrushParams; gri
   const custom = !b.builtin;
   const st = getApp();
   const customEraser = st.customErasers.some((brush) => brush.id === b.id);
+  const importedPack = useWin.getState().packs.find((pack) => pack.source !== 'catalog' && pack.brushes?.some((brush) => brush.id === b.id));
   return (
     <div className={cn('group rounded-lg border p-2 text-[11px]', active ? 'border-[#E8913A]/60 bg-[#E8913A]/10' : 'border-white/10 hover:border-white/25', !grid && 'flex items-center gap-3')}>
       <div className={grid ? '' : 'w-40 shrink-0'} onClick={() => selectBrush(b.id)}><PackPreview b={b} /></div>
@@ -1288,7 +1241,7 @@ function LibItem({ b, grid, active, fav, modified, onQr }: { b: BrushParams; gri
         {edit && custom ? (
           <input autoFocus defaultValue={b.name} onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={(e) => { setApp({ customBrushes: st.customBrushes.map((x) => (x.id === b.id ? { ...x, name: e.target.value || x.name } : x)), customErasers: st.customErasers.map((x) => (x.id === b.id ? { ...x, name: e.target.value || x.name } : x)) }); setEdit(false); }} className="w-full rounded bg-neutral-900 px-1 text-white outline-none ring-1 ring-[#E8913A]/50" />
         ) : <div className="truncate pt-1 text-neutral-200" title={b.description}>{b.name}</div>}
-        <div className="truncate text-[9px] uppercase tracking-wide text-neutral-500">{customEraser ? 'Custom Eraser' : custom ? 'Custom' : b.category} · {b.mode} · engine v{b.version}{modified ? ' · modified' : ''}</div>
+        <div className="truncate text-[9px] uppercase tracking-wide text-neutral-500">{customEraser ? 'Custom Eraser' : importedPack ? 'Imported' : custom ? 'Custom' : b.category} · {b.mode} · engine v{b.version}{modified ? ' · modified' : ''}</div>
         <div className="text-[9px] text-neutral-600">{formatAssetSize(measureBrushDefinitionBytes(b))} JSON definition</div>
       </div>
       <div className="mt-1 flex gap-1">
@@ -1298,11 +1251,22 @@ function LibItem({ b, grid, active, fav, modified, onQr }: { b: BrushParams; gri
         <button title={customEraser ? 'Duplicate as custom eraser tip' : 'Duplicate as custom preset'} onClick={() => { const nb = { ...brushById(b.id)!, id: uid(customEraser ? 'ce-' : 'cb-'), name: b.name + ' Copy', builtin: false }; if (customEraser) setApp({ customErasers: [...st.customErasers, nb] }); else setApp({ customBrushes: [...st.customBrushes, nb] }); toast(`Created “${nb.name}”`, 'success'); }} className="text-neutral-500 hover:text-white"><Copy size={12} /></button>
         {custom && <button title="Rename" onClick={() => setEdit(true)} className="text-neutral-500 hover:text-white"><PaletteIcon size={12} /></button>}
         {modified && <button title="Reset to defaults" onClick={() => { const o = { ...st.overrides }; delete o[b.id]; setApp({ overrides: o }); }} className="text-neutral-500 hover:text-white"><RotateCcw size={12} /></button>}
-        {custom && <button title={customEraser ? 'Delete custom eraser tip' : 'Delete custom brush'} onClick={async () => {
-          const answer = await confirmDialog(`Delete “${b.name}”?`, 'The custom preset will be removed from this device. Existing artwork strokes are not changed.', [
+        {custom && <button title={importedPack ? 'Remove brush from imported pack' : customEraser ? 'Delete custom eraser tip' : 'Delete custom brush'} onClick={async () => {
+          const answer = await confirmDialog(`Delete “${b.name}”?`, importedPack
+            ? `Only this brush will be removed from “${importedPack.name}”; its other brushes and existing artwork remain unchanged.`
+            : 'The custom preset will be removed from this device. Existing artwork strokes are not changed.', [
             { label: 'Keep', value: 'n' }, { label: 'Delete', value: 'y', variant: 'danger' },
           ]);
-          if (answer === 'y') setApp({ customBrushes: st.customBrushes.filter((x) => x.id !== b.id), customErasers: st.customErasers.filter((x) => x.id !== b.id), favorites: st.favorites.filter((x) => x !== b.id), recentBrushes: st.recentBrushes.filter((x) => x !== b.id), collections: st.collections.map((collection) => ({ ...collection, ids: collection.ids.filter((x) => x !== b.id) })), brushId: st.brushId === b.id ? 'pencil-hb' : st.brushId, eraserBrushId: st.eraserBrushId === b.id ? 'eraser-hard' : st.eraserBrushId });
+          if (answer !== 'y') return;
+          try {
+            if (importedPack) await removeImportedBrushFromPack(b.id);
+            else {
+              const latest = getApp();
+              const overrides = { ...latest.overrides }; delete overrides[b.id];
+              setApp({ customBrushes: latest.customBrushes.filter((x) => x.id !== b.id), customErasers: latest.customErasers.filter((x) => x.id !== b.id), overrides, favorites: latest.favorites.filter((x) => x !== b.id), recentBrushes: latest.recentBrushes.filter((x) => x !== b.id), collections: latest.collections.map((collection) => ({ ...collection, ids: collection.ids.filter((x) => x !== b.id) })), brushId: latest.brushId === b.id ? 'pencil-hb' : latest.brushId, eraserBrushId: latest.eraserBrushId === b.id ? 'eraser-hard' : latest.eraserBrushId });
+            }
+            toast(`Deleted “${b.name}”`, 'success');
+          } catch (error) { toast(`Could not remove brush: ${errorText(error)}`, 'error'); }
         }} className="text-neutral-500 hover:text-red-400"><Trash2 size={12} /></button>}
       </div>
     </div>
