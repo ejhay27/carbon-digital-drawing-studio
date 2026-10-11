@@ -10,8 +10,7 @@
                     "icon":  "node scripts/make-desktop-icon.mjs",
                     "desktop":  "npm run build \u0026\u0026 npm run icon \u0026\u0026 electron .",
                     "desktop:dev":  "electron .",
-                    "desktop:package":  "npm run build \u0026\u0026 npm run icon \u0026\u0026 electron-builder --win"
-                },
+                "desktop:package":  "npm run build \u0026\u0026 npm run icon \u0026\u0026 electron-builder --win --publish never",                },
     "dependencies":  {
                          "@capacitor/android":  "^8.5.3",
                          "@capacitor/app":  "^8.1.2",
