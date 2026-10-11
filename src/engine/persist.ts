@@ -1,18 +1,30 @@
 // Local-only persistence. Nothing here ever leaves the device.
 const DB_NAME = 'carbon-studio';
-const STORES = ['session', 'recent', 'refs', 'backup'] as const;
+// v2 adds an asset registry without touching existing project/session stores.
+const DB_VERSION = 2;
+const STORES = ['session', 'recent', 'refs', 'backup', 'assets'] as const;
 type StoreName = (typeof STORES)[number];
 
 let dbp: Promise<IDBDatabase> | null = null;
 function db(): Promise<IDBDatabase> {
   if (dbp) return dbp;
   dbp = new Promise((res, rej) => {
-    const r = indexedDB.open(DB_NAME, 1);
+    const r = indexedDB.open(DB_NAME, DB_VERSION);
     r.onupgradeneeded = () => {
       for (const s of STORES) if (!r.result.objectStoreNames.contains(s)) r.result.createObjectStore(s);
     };
-    r.onsuccess = () => res(r.result);
-    r.onerror = () => rej(r.error);
+    r.onsuccess = () => {
+      const opened = r.result;
+      opened.onversionchange = () => {
+        opened.close();
+        dbp = null;
+      };
+      res(opened);
+    };
+    r.onerror = () => {
+      dbp = null;
+      rej(r.error);
+    };
   });
   return dbp;
 }

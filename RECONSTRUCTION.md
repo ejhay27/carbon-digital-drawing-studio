@@ -1,6 +1,6 @@
 # CARBON: PRIME 7.x+ls — Reconstruction & Implementation Checklist
 
-Historical working document for the reconstruction of the repository into the **Carbon: Prime 7.1.0+ls** source candidate. Its audit findings, version references, “live” checklist and Android-scope statements below describe that earlier snapshot, not the current checkout. The current tree is the local **7.1.1+ls** candidate: its 7.1.0+ls feature increment includes the finder and Quick Start, while 7.1.1+ls updates the README and version metadata only. Android's own app/version identity remains separate, and no device acceptance is implied. See [`docs/AUDIT-7.1.0+ls.md`](docs/AUDIT-7.1.0+ls.md) for feature evidence and remaining checks.
+Historical working document for the reconstruction of the repository into the **Carbon: Prime 7.1.0+ls** source candidate. Its audit findings, version references, “live” checklist and Android-scope statements below describe that earlier snapshot, not the current checkout. This document was last current at the 7.1.1+ls snapshot; the current local source candidate is **7.5.1+ls**, with brush asset, QR sharing, Brush Lab and custom eraser work documented in [`docs/AUDIT-CURRENT-7.1.1+ls.md`](docs/AUDIT-CURRENT-7.1.1+ls.md). Android's own app/version identity remains separate, and no device acceptance is implied.
 
 ## 1. What was supplied
 

@@ -51,6 +51,8 @@ export interface Settings {
   autosaveSec: number;
   recordByDefault: boolean;
   replayLimitMB: number;
+  assetMaxDownloadMB: number;
+  assetMaxInstallMB: number;
   idleCapSec: number;
   undoLimit: number;
   stylusOnly: boolean;
@@ -151,7 +153,8 @@ export const DEFAULT_PALETTE: PaletteCfg = {
 };
 
 export const DEFAULT_SETTINGS: Settings = {
-  uiScale: 1, uiMode: 'auto', homeSceneEnabled: true, homeSceneMotion: true, restoreSession: true, autosaveSec: 30, recordByDefault: true, replayLimitMB: 250, idleCapSec: 2.5,
+  uiScale: 1, uiMode: 'auto', homeSceneEnabled: true, homeSceneMotion: true, restoreSession: true, autosaveSec: 30, recordByDefault: true, replayLimitMB: 250,
+  assetMaxDownloadMB: 100, assetMaxInstallMB: 500, idleCapSec: 2.5,
   undoLimit: 80, stylusOnly: false, twoFingerTap: 'undo', threeFingerTap: 'redo', shortcuts: { ...DEFAULT_SHORTCUTS },
   railTools: ALL_TOOLS.map((t) => t.id), gridSize: 64, showGrid: false, showRulers: false, showGuides: true, perspective: false,
   brushOutline: true, mousePressure: false, palmAuto: true, shareExports: true, immersive: true,
@@ -164,11 +167,17 @@ export function mergeSettings(persisted: Partial<Settings> = {}): Settings {
     ? [...new Set(persisted.pinnedProjects.filter((x): x is string => typeof x === 'string'))].slice(0, 200)
     : DEFAULT_SETTINGS.pinnedProjects;
   const sort: ProjectSort = persisted.homeProjectSort === 'name' || persisted.homeProjectSort === 'size' ? persisted.homeProjectSort : 'recent';
+  const assetMaxDownloadMB = Number.isFinite(persisted.assetMaxDownloadMB)
+    ? Math.max(1, Math.min(512, Math.round(persisted.assetMaxDownloadMB as number))) : DEFAULT_SETTINGS.assetMaxDownloadMB;
+  const assetMaxInstallMB = Number.isFinite(persisted.assetMaxInstallMB)
+    ? Math.max(1, Math.min(4096, Math.round(persisted.assetMaxInstallMB as number))) : DEFAULT_SETTINGS.assetMaxInstallMB;
   return {
     ...DEFAULT_SETTINGS,
     ...persisted,
     pinnedProjects: pins,
     homeProjectSort: sort,
+    assetMaxDownloadMB,
+    assetMaxInstallMB,
     quickStartSeen: typeof persisted.quickStartSeen === 'boolean' ? persisted.quickStartSeen : DEFAULT_SETTINGS.quickStartSeen,
     shortcuts: { ...DEFAULT_SHORTCUTS, ...(persisted.shortcuts || {}) },
   };
@@ -185,6 +194,7 @@ export interface AppState {
   tool: ToolId;
   presets: BrushParams[];
   customBrushes: BrushParams[];
+  customErasers: BrushParams[];
   overrides: Record<string, Partial<BrushParams>>;
   brushId: string;
   eraserBrushId: string;
@@ -224,6 +234,7 @@ export const useApp = create<AppState>()(
       tool: 'brush',
       presets: buildPresets(),
       customBrushes: [],
+      customErasers: [],
       overrides: {},
       brushId: 'pencil-hb',
       eraserBrushId: 'eraser-hard',
@@ -266,7 +277,7 @@ export const useApp = create<AppState>()(
     {
       name: 'carbon-prefs-v1',
       partialize: (s) => ({
-        customBrushes: s.customBrushes, overrides: s.overrides, brushId: s.brushId, eraserBrushId: s.eraserBrushId,
+        customBrushes: s.customBrushes, customErasers: s.customErasers, overrides: s.overrides, brushId: s.brushId, eraserBrushId: s.eraserBrushId,
         favorites: s.favorites, recentBrushes: s.recentBrushes, collections: s.collections, fg: s.fg, bg: s.bg,
         recentColors: s.recentColors, palettes: s.palettes, activePalette: s.activePalette, toolOpts: s.toolOpts,
         layout: s.layout, palette: s.palette, palettePresets: s.palettePresets, settings: s.settings, tool: s.tool, vps: s.vps,
@@ -276,6 +287,8 @@ export const useApp = create<AppState>()(
         return {
           ...current,
           ...p,
+          customBrushes: Array.isArray(p.customBrushes) ? p.customBrushes : current.customBrushes,
+          customErasers: Array.isArray(p.customErasers) ? p.customErasers : current.customErasers,
           settings: mergeSettings(p.settings),
           layout: { ...DEFAULT_LAYOUT, ...(p.layout || {}) },
           palette: { ...DEFAULT_PALETTE, ...(p.palette || {}) },
@@ -299,11 +312,11 @@ export function activeDoc(): DocEngine | null {
 }
 
 export function allBrushes(s: AppState = getApp()) {
-  return [...s.presets, ...extraBrushes(EDITION.windows), ...s.customBrushes];
+  return [...s.presets, ...extraBrushes(EDITION.windows), ...s.customBrushes, ...s.customErasers];
 }
 
 export function brushById(id: string, s: AppState = getApp()): BrushParams | undefined {
-  const b = s.presets.find((x) => x.id === id) || s.customBrushes.find((x) => x.id === id) || extraBrushes(EDITION.windows).find((x) => x.id === id);
+  const b = s.presets.find((x) => x.id === id) || s.customBrushes.find((x) => x.id === id) || s.customErasers.find((x) => x.id === id) || extraBrushes(EDITION.windows).find((x) => x.id === id);
   if (!b) return undefined;
   return { ...b, ...(s.overrides[id] || {}) };
 }
@@ -314,9 +327,15 @@ export function currentBrush(eraser = false, s: AppState = getApp()): BrushParam
 
 export function updateBrush(id: string, patch: Partial<BrushParams>) {
   const s = getApp();
-  const custom = s.customBrushes.find((b) => b.id === id);
-  if (custom) setApp({ customBrushes: s.customBrushes.map((b) => (b.id === id ? { ...b, ...patch } : b)) });
-  else setApp({ overrides: { ...s.overrides, [id]: { ...(s.overrides[id] || {}), ...patch } } });
+  if (s.customErasers.some((brush) => brush.id === id)) {
+    setApp({ customErasers: s.customErasers.map((brush) => (brush.id === id ? { ...brush, ...patch } : brush)) });
+    return;
+  }
+  if (s.customBrushes.some((brush) => brush.id === id)) {
+    setApp({ customBrushes: s.customBrushes.map((brush) => (brush.id === id ? { ...brush, ...patch } : brush)) });
+    return;
+  }
+  setApp({ overrides: { ...s.overrides, [id]: { ...(s.overrides[id] || {}), ...patch } } });
 }
 
 export function toast(msg: string, kind: Toast['kind'] = 'info') {
@@ -363,6 +382,7 @@ export function selectBrush(id: string) {
   const b = brushById(id);
   if (!b) return toast('Brush not found — it may have been deleted.', 'error');
   const eraser = s.tool === 'eraser';
+  if (!eraser && s.customErasers.some((brush) => brush.id === id)) return toast('This is a custom eraser tip. Select the Eraser tool to use it.', 'info');
   const recent = [id, ...s.recentBrushes.filter((x) => x !== id)].slice(0, 16);
   if (eraser) setApp({ eraserBrushId: id, recentBrushes: recent });
   else setApp({ brushId: id, recentBrushes: recent, tool: s.tool === 'brush' ? 'brush' : ['line', 'rect', 'ellipse'].includes(s.tool) ? s.tool : 'brush' });

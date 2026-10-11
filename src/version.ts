@@ -17,7 +17,7 @@
 // intentionally NOT driven from here, and its displayed labels are kept exactly as they were.
 import { EDITION } from './platform/edition';
 
-export const WINDOWS_VERSION = '7.1.1';
+export const WINDOWS_VERSION = '7.5.1';
 
 /** Local-Storage release suffix ("ls" = Local Storage). Shown wherever the format allows. */
 export const LS_SUFFIX = '+ls';

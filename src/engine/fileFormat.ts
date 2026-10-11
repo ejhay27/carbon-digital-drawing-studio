@@ -11,7 +11,7 @@ import type { ComicObject, LayerLink } from './types';
 import { uid } from './util';
 import type { ComicPageMeta } from './comic';
 import { DEFAULT_ADJUST } from './render';
-import { APP_LABEL } from '../version'; // "CARBON PRIME 7.1.1+ls" on Windows; Android keeps its legacy label
+import { APP_LABEL } from '../version'; // "CARBON PRIME 7.5.1+ls" on Windows; Android keeps its legacy label
 
 const BLENDS = ['lighter', 'linear-burn', 'source-over', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
 

@@ -1,6 +1,6 @@
 # Carbon: Prime 7.1.0+ls — source audit and release readiness
 
-> **Historical baseline snapshot:** this report records the initial 7.1.0+ls source state, before completion of the local-first feature increment. The four proposals below were subsequently implemented in the completed 7.1.0+ls candidate; the current 7.1.1+ls source candidate is a documentation/version-metadata patch. See [`AUDIT-7.1.0+ls.md`](AUDIT-7.1.0+ls.md) for the feature audit. The initial test/build metrics and acceptance gaps remain historical evidence, not 7.1.1 results.
+> **Historical baseline snapshot:** this report records the initial 7.1.0+ls source state, before completion of the local-first feature increment. The four proposals below were subsequently implemented in the completed 7.1.0+ls candidate. The 7.1.1+ls snapshot was a documentation/version-metadata patch; the current local source candidate is 7.5.1+ls. See [`AUDIT-7.1.0+ls.md`](AUDIT-7.1.0+ls.md) for the historical feature audit and [`AUDIT-CURRENT-7.1.1+ls.md`](AUDIT-CURRENT-7.1.1+ls.md) for current implementation progress and verification boundaries. The initial test/build metrics and acceptance gaps remain historical evidence.
 
 **Audit date:** 2026-10-11<br>
 **Checkout:** `arena/a19e311c-carbon-digital-drawing-studio`<br>

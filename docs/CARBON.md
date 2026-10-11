@@ -2,7 +2,7 @@
 
 A professional, local-first creative studio for drawing, painting, illustration, spatial (3D) drawing and comics: a canvas-first, customizable workspace with an extensive brush engine, editable Crisp Ink paths, a complete Drawing Replay system, the White-Ground 3D Studio, Comic Studio and a local brush library. It works fully offline, needs no account and sends no telemetry. Release line: 7.x+ls (see [PRIME-7.md](./PRIME-7.md)).
 
-> **Documentation scope:** This engine deep-dive began as Carbon 1.0 documentation and preserves some historical platform, limitation and roadmap notes below. Those notes are not current Carbon: Prime 7.1.1+ls status. The current source-candidate audit and platform boundaries are in [`AUDIT-7.1.0+ls.md`](./AUDIT-7.1.0+ls.md), [`WINDOWS.md`](./WINDOWS.md) and [`ANDROID.md`](./ANDROID.md). The 3D workspace discussed as future work in §9 now exists as 3D Studio.
+> **Documentation scope:** This engine deep-dive began as Carbon 1.0 documentation and preserves some historical platform, limitation and roadmap notes below. Those notes are not current Carbon: Prime 7.5.1+ls status. The current source-candidate audit and platform boundaries are in [`AUDIT-CURRENT-7.1.1+ls.md`](./AUDIT-CURRENT-7.1.1+ls.md), [`WINDOWS.md`](./WINDOWS.md) and [`ANDROID.md`](./ANDROID.md). The 3D workspace discussed as future work in §9 now exists as 3D Studio.
 
 ---
 

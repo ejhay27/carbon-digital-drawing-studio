@@ -16,15 +16,18 @@ import { createTouchGestureGate } from '../src/win/touchGestureGate';
 import {
   DEFAULT_VIEW, applyMat, colorLuminance, curvePath, defaultScene, localizeSurfaceNormal, localizeSurfaceStroke, makeGrid, persistSceneCamera, projectSurfaceSymmetryPaths, remapSurfaceNormals, sceneOf, simplify3, smooth3, surfaceHit, symMatrices,
 } from '../src/win/sceneRender';
-import { buildPresets } from '../src/engine/brushes';
+import { buildPresets, ENGINE_VERSION } from '../src/engine/brushes';
 import { brushFingerprint } from '../src/engine/brushes';
+import { DEFAULT_MAX_BRUSH_PACK_BYTES, exportPack, parsePack } from '../src/engine/brushPacks';
+import { downloadRemoteBrushPack, formatAssetSize, measureBrushDefinitionBytes, measureBrushPackBytes, megabytesToBytes, parseRemoteAssetCatalog, type RemoteBrushPack } from '../src/engine/assetStore';
+import { MAX_BRUSH_QR_BYTES, makeBrushQrPayload, parseBrushQrPayload } from '../src/engine/brushQR';
 import { MIME, FORMAT_VERSION, isComicArchive, verifyBytes } from '../src/engine/fileFormat';
 import { zipSync, strToU8 } from 'fflate';
 import { LAYOUTS, PAGE_PRESETS, layoutPanels } from '../src/engine/comic';
 import { clamp, hexToRgb, hexToHsv, hsvToHex, isHex, normHex, rgbToHex, rgbToHsv, hsvToRgb } from '../src/engine/util';
 import { findProjects, recentPinId, togglePinnedId } from '../src/state/projectFinder';
 import { firstPaletteSelection, nextPaletteSelection, searchPaletteItems } from '../src/state/commandPalette';
-import { DEFAULT_SETTINGS, DEFAULT_SHORTCUTS, mergeSettings } from '../src/state/store';
+import { DEFAULT_SETTINGS, DEFAULT_SHORTCUTS, allBrushes, brushById, getApp, mergeSettings, selectBrush, setApp, updateBrush } from '../src/state/store';
 import { buildQuickStartSample } from '../src/state/quickStartSample';
 
 // ---------------------------------------------------------------- tiny harness
@@ -414,7 +417,74 @@ await rejects(() => replaceProjectFile(rollbackFs, { ...writePaths, data: newPro
 eq(atob(rollbackFs.files.get(writePaths.path)!), oldProjectText, 'failed installation restores the previous project instead of deleting it');
 ok(!rollbackFs.files.has(writePaths.backupPath), 'rollback restores the existing project to its original path');
 
-// ---------------------------------------------------------------- 9. .carbon archive guards
+// ---------------------------------------------------------------- 9. Shared asset storage / marketplace guards
+section('Shared brush asset storage, size reporting and remote validation');
+const assetBrush = buildPresets()[0];
+const assetName = 'Remote sketch tools';
+const assetCategory = 'Sketching';
+const assetId = 'remote-sketch-tools';
+const assetJson = exportPack(assetName, [assetBrush], assetId, assetCategory, 2);
+const assetBytes = new TextEncoder().encode(assetJson);
+eq(DEFAULT_MAX_BRUSH_PACK_BYTES, 100 * 1024 * 1024, 'default import/download limit is 100 MB and configurable');
+eq(megabytesToBytes(1.5), 1_572_864, 'asset limits convert MiB to exact bytes');
+eq(formatAssetSize(0), '0 B', 'zero-byte assets are formatted honestly');
+eq(formatAssetSize(1024), '1.0 KB', 'asset sizes use binary kilobytes');
+eq(formatAssetSize(1024 * 1024), '1.0 MB', 'asset sizes use binary megabytes');
+const { builtin: _assetBuiltin, ...assetDefinition } = assetBrush;
+eq(measureBrushDefinitionBytes(assetBrush), new TextEncoder().encode(JSON.stringify(assetDefinition)).byteLength, 'individual brush definition reports exact UTF-8 JSON bytes');
+eq(measureBrushPackBytes({ id: assetId, name: assetName, category: assetCategory, version: 2, brushes: [assetBrush] }), assetBytes.byteLength, 'pack size matches its serialized installed asset');
+const importedOnce = parsePack(assetJson, []);
+const reserialized = exportPack(importedOnce.pack.name, importedOnce.pack.brushes || [], importedOnce.pack.id, importedOnce.pack.category, importedOnce.pack.version);
+const importedAgain = parsePack(reserialized, []);
+eq(importedAgain.pack.brushes?.map((b) => b.id), importedOnce.pack.brushes?.map((b) => b.id), 'brush IDs remain stable across safe pack store/reload');
+throws(() => parsePack(assetJson, [], 8), 'pack parser enforces a configurable UTF-8 byte limit');
+const unsupportedEngine = JSON.parse(assetJson) as Record<string, unknown>;
+unsupportedEngine.engine = ENGINE_VERSION + 1;
+throws(() => parsePack(JSON.stringify(unsupportedEngine), []), 'pack parser rejects a newer unsupported brush engine');
+const legacyLimits = mergeSettings({ assetMaxDownloadMB: 9000, assetMaxInstallMB: 0 });
+eq(legacyLimits.assetMaxDownloadMB, 512, 'download setting is clamped to the 512 MB hard cap');
+eq(legacyLimits.assetMaxInstallMB, 1, 'installed storage limit stays at least 1 MB');
+eq(mergeSettings({}).assetMaxDownloadMB, 100, 'existing preferences gain the default per-pack limit');
+const catalogUrl = 'https://assets.example/catalog.json';
+const remoteManifest = {
+  format: 'carbon-brush-catalog', version: 1,
+  packs: [{
+    id: 'remote-sketch-tools', name: assetName, category: assetCategory, version: 2, description: 'Validated test pack.',
+    creator: 'Test Studio', license: 'CC0-1.0', featured: true, free: true,
+    format: 'carbon-brushpack', engineVersion: ENGINE_VERSION, url: './packs/remote-sketch-tools.carbonpack',
+    sizeBytes: assetBytes.byteLength, sha256: 'a'.repeat(64),
+  }],
+};
+const remoteCatalog = parseRemoteAssetCatalog(JSON.stringify(remoteManifest), catalogUrl);
+eq(remoteCatalog.length, 1, 'strict remote catalog parser accepts a well-formed entry');
+eq(remoteCatalog[0].url, 'https://assets.example/packs/remote-sketch-tools.carbonpack', 'relative pack URLs remain on the configured HTTPS origin');
+eq(remoteCatalog[0].creator, 'Test Studio', 'creator metadata is kept when provided');
+throws(() => parseRemoteAssetCatalog(JSON.stringify({ ...remoteManifest, packs: [{ ...remoteManifest.packs[0], url: 'https://evil.example/pack.carbonpack' }] }), catalogUrl), 'remote catalog rejects cross-origin pack URLs');
+throws(() => parseRemoteAssetCatalog(JSON.stringify(remoteManifest), 'http://assets.example/catalog.json'), 'remote catalog rejects non-HTTPS catalog endpoints');
+throws(() => parseRemoteAssetCatalog(JSON.stringify({ ...remoteManifest, packs: [{ ...remoteManifest.packs[0], free: false }] }), catalogUrl), 'unsupported paid packs are not shown as free');
+throws(() => parseRemoteAssetCatalog(JSON.stringify({ ...remoteManifest, packs: [{ ...remoteManifest.packs[0], sha256: '' }] }), catalogUrl), 'remote packs require a SHA-256 digest');
+const assetDigest = await globalThis.crypto.subtle.digest('SHA-256', assetBytes.slice().buffer);
+const assetHash = Array.from(new Uint8Array(assetDigest), (part) => part.toString(16).padStart(2, '0')).join('');
+const verifiedRemoteEntry: RemoteBrushPack = { ...remoteCatalog[0], sha256: assetHash };
+let transferProgress = 0;
+const fakeAssetFetch: typeof fetch = async () => new Response(assetBytes.slice().buffer as ArrayBuffer, { status: 200, headers: { 'content-length': String(assetBytes.byteLength) } });
+const verifiedBytes = await downloadRemoteBrushPack(verifiedRemoteEntry, catalogUrl, assetBytes.byteLength, {
+  fetcher: fakeAssetFetch, onProgress: ({ loadedBytes }) => { transferProgress = loadedBytes; },
+});
+eq(verifiedBytes.byteLength, assetBytes.byteLength, 'verified remote downloader returns the declared bytes');
+eq(transferProgress, assetBytes.byteLength, 'remote downloader reports real transferred bytes');
+await rejects(() => downloadRemoteBrushPack({ ...verifiedRemoteEntry, sha256: '0'.repeat(64) }, catalogUrl, assetBytes.byteLength, { fetcher: fakeAssetFetch }), 'remote downloader rejects a mismatched SHA-256 digest');
+await rejects(() => downloadRemoteBrushPack(verifiedRemoteEntry, catalogUrl, assetBytes.byteLength - 1, { fetcher: fakeAssetFetch }), 'remote downloader enforces the configurable download limit before fetching');
+const qrPayload = makeBrushQrPayload({ id: 'qr-shared-brush', name: 'Shared Brush', category: 'Sketching', brushes: [assetBrush] });
+const qrImport = parseBrushQrPayload(qrPayload, []);
+eq(qrImport.pack.name, 'Shared Brush', 'Carbon QR carries safe pack metadata');
+eq(qrImport.pack.brushes?.length, 1, 'Carbon QR restores a usable validated brush');
+ok(new TextEncoder().encode(qrPayload).byteLength <= MAX_BRUSH_QR_BYTES, 'generated QR payload respects its conservative byte cap');
+throws(() => parseBrushQrPayload('https://example.invalid/anything', []), 'QR import never auto-opens arbitrary URLs');
+throws(() => makeBrushQrPayload({ id: 'large', name: 'Large QR', category: 'Test', brushes: [assetBrush] }, 10), 'QR creation refuses payloads larger than the encoded-byte budget');
+throws(() => makeBrushQrPayload({ id: 'stamped', name: 'Stamp', category: 'Test', brushes: [{ ...assetBrush, stamp: 'data:image/png;base64,AA==' }] }), 'QR creation refuses to omit or truncate embedded stamp artwork');
+
+// ---------------------------------------------------------------- 10. .carbon archive guards
 section('.carbon file guards');
 eq(MIME, 'application/x-carbon', 'format MIME');
 eq(FORMAT_VERSION, 1, 'format version');
@@ -438,6 +508,18 @@ throws(() => verifyBytes(makeGuardArchive({
 throws(() => verifyBytes(makeGuardArchive({
   ...archiveManifest, replay: { file: 'replay/events.json', enabled: true, paused: false, epoch: 0 },
 })), 'verifyBytes rejects missing replay data');
+
+section('Custom eraser presets persist separately and remain usable');
+const testEraser = { ...assetBrush, id: 'ce-audit-eraser', name: 'Audit eraser tip', builtin: false };
+setApp({ customErasers: [testEraser], tool: 'eraser', brushId: 'pencil-hb', eraserBrushId: 'eraser-hard' });
+ok(allBrushes(getApp()).some((brush) => brush.id === testEraser.id), 'custom eraser tips are available in the shared brush lookup');
+eq(brushById(testEraser.id)?.name, testEraser.name, 'custom eraser tip resolves through the real brush model');
+selectBrush(testEraser.id);
+eq(getApp().eraserBrushId, testEraser.id, 'selecting a custom eraser while Eraser is active updates its active tip');
+updateBrush(testEraser.id, { size: 19 });
+eq(getApp().customErasers.find((brush) => brush.id === testEraser.id)?.size, 19, 'custom eraser parameter edits update its persistent preset');
+const storedPreferences = JSON.parse(localStorage.getItem('carbon-prefs-v1') || 'null')?.state;
+eq(storedPreferences?.customErasers?.[0]?.id, testEraser.id, 'custom eraser list is included in local preference persistence');
 
 // ---------------------------------------------------------------- done
 console.log(`\n${pass} assertions passed, ${failures.length} failed`);

@@ -1,27 +1,26 @@
 # Carbon: Prime — 7.x+ls release documentation
 
-**Product:** Carbon: Prime · **Tagline:** Where all starts begin. · **Current local source candidate:** `7.1.1+ls`
+**Product:** Carbon: Prime · **Tagline:** Where all starts begin. · **Current local source candidate:** `7.5.1+ls`
 (`+ls` = Local Storage). The release line is **7.x+ls**; it is never renamed to Carbon 8.
 
-The four discoverability and surface-symmetry features were implemented in the 7.1.0+ls
-feature increment. The current 7.1.1+ls patch updates README documentation and version metadata
-only; it does not add runtime features. This document retains the initial 7.1.0+ls baseline audit.
-It is not proof of publication: no 7.1.x GitHub release, Windows installer/EXE, or current-branch
-Android APK is claimed. See [`AUDIT-7.1.0+ls.md`](AUDIT-7.1.0+ls.md) for feature evidence and
-remaining browser/platform acceptance.
+The 7.5.1+ls source candidate adds local-first brush asset storage, safe bundled Marketplace
+workflows, bounded QR brush sharing, draft-based Brush Lab and Custom Eraser Studio. It is not a
+published release. The earlier 7.1.0/7.1.1 implementation history remains below as historical
+context; current code and verification limits are recorded in
+[`AUDIT-CURRENT-7.1.1+ls.md`](AUDIT-CURRENT-7.1.1+ls.md). No Windows installer, Android APK or
+end-to-end browser/platform acceptance is claimed.
 
 ---
 
-## Current local source candidate — 7.1.1+ls
+## Current local source candidate — 7.5.1+ls
 
-- **Project finder:** search/filter browser-local recent documents and Android device files in separate labeled sections; pin/unpin and sort by recent activity, name or size. Pin keys and sort preference persist in Carbon's local settings, with defaults backfilled for existing preference records.
-- **Command palette:** **Ctrl+K** opens searchable actions, tools, Windows workspaces, settings and recent files. Arrow Up/Down, Home/End, Enter and Escape navigate/run/close; commands display their assigned shortcuts. The shortcut can be changed in Preferences → Shortcuts.
-- **Offline first-run guide/sample:** a dismissible tour is offered from Home/Welcome, with a reusable Help/Home entry. The bundled sample is a new 1200×900 document with separately editable paint and ink layers; every open constructs a fresh sample and does not overwrite an existing document or file. No network fetch is used.
-- **3D surface symmetry:** mirror/radial copies of object-surface strokes are ray-projected to real visible meshes using transformed sample normals. A copy is accepted only if its complete path can stay on one surface; copies with no matching geometry are skipped rather than emitted as floating curves. Accepted paths are parented to their target meshes, stored in target-local coordinates, and stay individually editable.
-- **Compatibility/version:** Windows/desktop version metadata is `7.1.1+ls`; package and lockfile are `7.1.1`. This is a documentation-only patch over the 7.1.0 feature increment. Android remains separately identified as `CARBON 1.0.0`, with no Android version bump. The `.carbon` archive/manifest format is unchanged.
-- **README/about update (7.1.1+ls):** the project README now gives an app description, credits developer Ejhay Claus B. Predonio, names the source languages/technologies, summarizes features and explains the local-first architecture and build paths. No product-runtime code changed in this patch.
-- **Code-level evidence:** current 7.1.1+ls source passes `npm run typecheck` and `npm test` (**258 assertions, 0 failures**). The suite covers finder/pin/sort, palette search/navigation, settings migration, sample isolation and mesh ray-projection/editability. This does not constitute browser UI, WebGL interaction, Windows executable/installer, or Android device acceptance.
-- **Local-only status:** no release was published. The candidate remains subject to browser visual/accessibility testing, Help → Run Diagnostics in a browser, Windows packaging/runtime checks and separate Android build/device validation.
+- **Brush Marketplace:** bundled packs remain available offline. Pack import/export and local storage use validated definitions; no remote catalog host is configured, so the UI clearly reports remote packs unavailable rather than faking downloads, ratings or popularity.
+- **Shared asset storage:** brush-pack bytes and metadata are stored through a local IndexedDB asset store with configurable per-pack and total-install limits, hard size checks, browser-origin storage estimates and installed/input byte reporting. Project artwork remains in its existing project-storage paths.
+- **QR brush sharing/import:** a versioned `carbon-brush-qr` payload is limited to 1,800 UTF-8 bytes. The UI creates PNG and text shares, decodes QR image files locally and offers an explicit camera flow. Arbitrary URLs are rejected; stamped or oversized brush packs use `.carbonpack` instead. Camera decoding and device/browser acceptance remain unverified.
+- **Brush Lab and Custom Eraser Studio:** draft parameter edits and preview use the actual brush engine; saved user brushes and custom eraser tips are separate local presets. Eraser tips are selected only while Eraser is active. Destructive deletion confirms and cleans up references without modifying artwork.
+- **Compatibility/version:** Windows/desktop source metadata is `7.5.1+ls`, with bare package version `7.5.1`. Android remains separately identified as `CARBON 1.0.0`; the `.carbon` archive/manifest format is unchanged.
+- **Local-only status:** no release is published. QR camera scanning, brush save/use flows, visuals, accessibility, Help → Run Diagnostics, Windows packaging/runtime and Android build/device acceptance remain outstanding.
+- **Remaining roadmap:** a complete unified user asset manager, local illustration browser/OS-folder workflows, Home visual/performance acceptance and expanded platform testing are not completed by this source candidate.
 
 ## 1. Historical 7.1.0+ls source foundation
 

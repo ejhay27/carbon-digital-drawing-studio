@@ -5,7 +5,7 @@ import { CATEGORIES, exportBrushes, parseBrushImport, searchBrushes } from '../e
 import { brushPreview, renderStroke, sampleCurve } from '../engine/strokeRenderer';
 import { ensureStamp, missingStamps } from '../engine/tips';
 import { blobToDataURL, download, uid } from '../engine/util';
-import { allBrushes, brushById, currentBrush, getApp, selectBrush, setApp, toast, updateBrush, useApp } from '../state/store';
+import { allBrushes, brushById, confirmDialog, currentBrush, getApp, selectBrush, setApp, toast, updateBrush, useApp } from '../state/store';
 import { pickFile } from '../state/actions';
 import { Btn, SectionTitle, Select, Slider, Toggle } from './ui';
 import { cn } from '../utils/cn';
@@ -30,11 +30,13 @@ export function exportBrushList(list: BrushParams[], name: string) {
 }
 export function duplicateCurrent() {
   const s = getApp();
-  const b = currentBrush(s.tool === 'eraser');
-  const nb: BrushParams = { ...b, id: uid('cb-'), name: b.name + ' Copy', builtin: false, category: b.category };
-  setApp({ customBrushes: [...s.customBrushes, nb] });
+  const eraser = s.tool === 'eraser';
+  const b = currentBrush(eraser, s);
+  const nb: BrushParams = { ...b, id: uid(eraser ? 'ce-' : 'cb-'), name: b.name + ' Copy', builtin: false, category: b.category };
+  if (eraser) setApp({ customErasers: [...s.customErasers, nb] });
+  else setApp({ customBrushes: [...s.customBrushes, nb] });
   selectBrush(nb.id);
-  toast(`Created “${nb.name}”`, 'success');
+  toast(`Created “${nb.name}”${eraser ? ' eraser tip' : ''}`, 'success');
 }
 
 function BrushRow({ b, active, fav }: { b: BrushParams; active: boolean; fav: boolean }) {
@@ -102,7 +104,7 @@ export function BrushLibrary() {
   }
   if (cat !== 'All') list = list.filter((b) => b.category === cat);
   list = searchBrushes(list, q);
-  const cats = ['All', ...CATEGORIES, ...Array.from(new Set(s.customBrushes.map((b) => b.category))).filter((c) => !(CATEGORIES as readonly string[]).includes(c))];
+  const cats = ['All', ...CATEGORIES, ...Array.from(new Set([...s.customBrushes, ...s.customErasers].map((b) => b.category))).filter((c) => !(CATEGORIES as readonly string[]).includes(c))];
   const current = brushById(activeId);
 
   return (
@@ -124,9 +126,14 @@ export function BrushLibrary() {
       <div className="flex flex-wrap gap-1 border-t border-white/5 pt-2">
         <Btn title="Duplicate current brush as a custom preset" onClick={duplicateCurrent}><Copy size={11} /> Duplicate</Btn>
         {current && !current.builtin && (
-          <Btn title="Delete custom brush" onClick={() => {
-            setApp({ customBrushes: s.customBrushes.filter((b) => b.id !== current.id), favorites: s.favorites.filter((x) => x !== current.id), brushId: eraser ? s.brushId : 'pencil-hb', eraserBrushId: eraser ? 'eraser-hard' : s.eraserBrushId });
-            toast(`Deleted “${current.name}”`);
+          <Btn title="Delete custom brush or eraser" onClick={async () => {
+            const answer = await confirmDialog(`Delete “${current.name}”?`, 'The custom brush/eraser will be removed from this device. Existing artwork is not changed.', [
+              { label: 'Keep', value: 'n' }, { label: 'Delete', value: 'y', variant: 'danger' },
+            ]);
+            if (answer === 'y') {
+              setApp({ customBrushes: s.customBrushes.filter((b) => b.id !== current.id), customErasers: s.customErasers.filter((b) => b.id !== current.id), favorites: s.favorites.filter((x) => x !== current.id), recentBrushes: s.recentBrushes.filter((x) => x !== current.id), collections: s.collections.map((collection) => ({ ...collection, ids: collection.ids.filter((x) => x !== current.id) })), brushId: eraser ? s.brushId : 'pencil-hb', eraserBrushId: eraser ? 'eraser-hard' : s.eraserBrushId });
+              toast(`Deleted “${current.name}”`);
+            }
           }}><Trash2 size={11} /></Btn>
         )}
         <Select value="" onChange={(v) => {
@@ -142,7 +149,7 @@ export function BrushLibrary() {
       </div>
       <div className="flex flex-wrap gap-1">
         <Btn onClick={importBrushPack}><Upload size={11} /> Import pack</Btn>
-        <Btn onClick={() => exportBrushList(s.customBrushes, 'carbon-custom-brushes')}><Download size={11} /> Export custom</Btn>
+        <Btn onClick={() => exportBrushList([...s.customBrushes, ...s.customErasers], 'carbon-custom-brushes-and-erasers')}><Download size={11} /> Export custom</Btn>
         <Btn onClick={() => current && exportBrushList([current], current.name.replace(/\s+/g, '-'))}><FolderPlus size={11} /> Export current</Btn>
       </div>
     </div>
@@ -188,11 +195,11 @@ function LivePreview({ b, color }: { b: BrushParams; color: string }) {
   return <canvas ref={ref} className="h-20 w-full rounded-md border border-white/10" />;
 }
 
-export function BrushStudio() {
+export function BrushStudio({ draft, onDraftChange }: { draft?: BrushParams; onDraftChange?: (patch: Partial<BrushParams>) => void } = {}) {
   const s = useApp();
-  const eraser = s.tool === 'eraser';
-  const b = currentBrush(eraser, s);
-  const u = (p: Partial<BrushParams>) => updateBrush(b.id, p);
+  const eraser = !draft && s.tool === 'eraser';
+  const b = draft || currentBrush(eraser, s);
+  const u = (p: Partial<BrushParams>) => draft ? onDraftChange?.(p) : updateBrush(b.id, p);
   const sl = (label: string, key: keyof BrushParams, min: number, max: number, step = 0.01, fmt?: (v: number) => string) => (
     <Slider label={label} value={Number(b[key])} min={min} max={max} step={step} fmt={fmt} onChange={(v) => u({ [key]: v } as Partial<BrushParams>)} />
   );
@@ -208,7 +215,7 @@ export function BrushStudio() {
           <input value={b.name} onChange={(e) => u({ name: e.target.value })} onKeyDown={(e) => e.stopPropagation()} className="min-w-0 flex-1 rounded bg-neutral-900 px-2 py-1 text-[11px] text-white outline-none ring-1 ring-white/10" />
         )}
         {b.builtin && s.overrides[b.id] && <Btn title="Reset preset to factory settings" onClick={() => { const o = { ...s.overrides }; delete o[b.id]; setApp({ overrides: o }); }}><RotateCcw size={11} /></Btn>}
-        <Btn title="Save as new custom brush" onClick={duplicateCurrent}><Save size={11} /></Btn>
+        {!draft && <Btn title="Save as new custom brush" onClick={duplicateCurrent}><Save size={11} /></Btn>}
       </div>
       <p className="text-[10px] leading-snug text-neutral-500">{b.description}</p>
       <SectionTitle>Stroke</SectionTitle>
@@ -224,6 +231,8 @@ export function BrushStudio() {
         <Btn onClick={async () => {
           const f = await pickFile('image/png,image/jpeg,image/webp');
           if (!f) return;
+          if (f.size > 300_000) return toast('Stamp image must be 300 KB or smaller for safe brush storage.', 'error');
+          if (!['image/png', 'image/jpeg', 'image/webp'].includes(f.type)) return toast('Stamp must be a PNG, JPEG, or WebP image.', 'error');
           const url = await blobToDataURL(f);
           await ensureStamp(url);
           if (missingStamps.has(url)) return toast('Could not decode stamp image', 'error');

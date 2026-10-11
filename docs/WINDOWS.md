@@ -1,15 +1,15 @@
 # CARBON for Windows
 
-## Current source candidate: Carbon: Prime 7.1.1+ls
+## Current source candidate: Carbon: Prime 7.5.1+ls
 
 The Windows/desktop source identity remains **Carbon: Prime 7.x+ls** (`+ls` = Local Storage).
-`7.1.1+ls` is a documentation/version-metadata patch over the 7.1.0+ls local feature increment;
-it is not a published release. The 7.1.0 feature increment added the search/pin/sort project
-finder, Ctrl+K command palette, optional offline guide and editable sample, and 3D
-surface-projected symmetry. The 7.1.0+ls Prime home, White Ground, perspective grid, dedicated
-camera controls and other source changes remain in place. Node tests cover source-level behavior;
-visual/browser and Windows runtime acceptance remain outstanding. See
-[`AUDIT-7.1.0+ls.md`](./AUDIT-7.1.0+ls.md) and [`PRIME-7.md`](./PRIME-7.md).
+`7.5.1+ls` is a local, unpublished source candidate. It adds a validated local brush-pack asset
+store, offline bundled Marketplace UI, QR brush sharing/import flow, draft-based Brush Lab and
+separate custom eraser presets. No remote catalog host is configured. This code-level work does
+not establish browser acceptance, Windows installer/runtime support or Android acceptance; QR
+camera decoding is unverified. See
+[`AUDIT-CURRENT-7.1.1+ls.md`](./AUDIT-CURRENT-7.1.1+ls.md) for the implementation boundaries and
+[`PRIME-7.md`](./PRIME-7.md) for version history.
 
 ---
 

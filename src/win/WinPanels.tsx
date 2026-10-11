@@ -1,19 +1,31 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { zipSync } from 'fflate';
-import { Box, Brush, Check, Copy, Download, Eye, FilePlus2, Layers3, MessageSquare, Palette as PaletteIcon, Plus, RotateCcw, Search, Sparkles, Star, Trash2, Upload, Wand2 } from 'lucide-react';
-import { activeDoc, allBrushes, brushById, confirmDialog, getApp, selectBrush, setApp, setTool, toast, useApp } from '../state/store';
+import jsQR from 'jsqr';
+import QRCode from 'qrcode';
+import { Box, Brush, Check, CloudDownload, Copy, Download, Eye, FilePlus2, HardDrive, Layers3, MessageSquare, Palette as PaletteIcon, Plus, QrCode, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, Star, Trash2, Upload, Wand2, X } from 'lucide-react';
+import { activeDoc, allBrushes, brushById, confirmDialog, getApp, selectBrush, setApp, setTool, toast, updateSettings, useApp } from '../state/store';
+import { BrushStudio } from '../components/Brushes';
 import { addDoc, closeDoc, pickFile } from '../state/actions';
 import { DocEngine, pxToCanvas } from '../engine/document';
 import { compositeDoc, DEFAULT_ADJUST } from '../engine/render';
 import { FILTERS, fxById, runFx, scaleParams } from '../engine/filters';
 import { LAYOUTS, layoutPanels, makePdf, PAGE_PRESETS } from '../engine/comic';
-import { CATALOG, exportPack, parsePack } from '../engine/brushPacks';
+import { CATALOG, DEFAULT_MAX_BRUSH_PACK_BYTES, MAX_BRUSH_PACK_BYTES, exportPack, parsePack, type InstalledPack, type PackDef } from '../engine/brushPacks';
+import { ENGINE_VERSION } from '../engine/brushes';
+import { ensureStamp, missingStamps } from '../engine/tips';
+import {
+  configuredRemoteCatalogUrl, downloadRemoteBrushPack, fetchRemoteAssetCatalog, formatAssetSize,
+  listStoredBrushPacks, measureBrushDefinitionBytes, measureBrushPackBytes, megabytesToBytes,
+  removeStoredBrushPack, storeBrushPackAsset, type RemoteBrushPack, type StoredBrushPack,
+} from '../engine/assetStore';
+import { storageEstimate } from '../engine/persist';
+import { MAX_BRUSH_QR_BYTES, makeBrushQrPayload, parseBrushQrPayload } from '../engine/brushQR';
 import { brushPreview } from '../engine/strokeRenderer';
 import { serializeComic, serializeDoc, deserializeDoc } from '../engine/fileFormat';
 import { canvasToBlob, createCanvas, ctxOf, download, hexToRgb, isHex, normHex, rgbToHex, uid } from '../engine/util';
 import type { AdjustParams, BalloonStyle, BrushParams, ComicBalloon, ComicFx, ComicFxKind, ComicObject, ComicPanel } from '../engine/types';
 import { comicObjects, GRADIENT_PRESETS, liqCancel, liqCommit, liqReset, setComicObjects, setWin, updateComicObject, useWin, type ComicMode, type Workspace } from './WinOverlay';
-import { Btn, NumInput, SectionTitle, Select, Slider, Toggle } from '../components/ui';
+import { Btn, Modal, NumInput, SectionTitle, Select, Slider, Toggle } from '../components/ui';
 import { LayoutDashboard } from 'lucide-react';
 import { LayerLinkTools, PanelCapture } from './Continuum';
 import { cn } from '../utils/cn';
@@ -558,115 +570,740 @@ function PackPreview({ b }: { b: BrushParams }) {
   return <div className="h-10 w-full overflow-hidden rounded bg-neutral-950/70">{u && <img src={u} alt="" className="h-full w-full object-cover" />}</div>;
 }
 
+type MarketTab = 'market' | 'library' | 'storage' | 'lab' | 'eraser';
+type MarketCard = {
+  id: string;
+  installId: string;
+  name: string;
+  category: string;
+  version: number;
+  description: string;
+  creator: string | null;
+  license: string | null;
+  featured: boolean;
+  source: 'bundled' | 'remote';
+  sizeBytes: number;
+  brushes?: BrushParams[];
+  remote?: RemoteBrushPack;
+};
+
+function errorText(error: unknown) { return error instanceof Error ? error.message : String(error); }
+
 export function BrushMarket() {
   const s = useApp();
   const packs = useWin((x) => x.packs);
   const view = useWin((x) => x.libView);
-  const [tab, setTab] = useState<'market' | 'library'>('market');
+  const [tab, setTab] = useState<MarketTab>('market');
   const [q, setQ] = useState('');
   const [cat, setCat] = useState('All');
+  const [libCat, setLibCat] = useState('All');
+  const [sort, setSort] = useState<'featured' | 'name' | 'brushes' | 'size'>('featured');
   const [limit, setLimit] = useState(60);
+  const [assets, setAssets] = useState<StoredBrushPack[]>([]);
+  const [storageEstimateInfo, setStorageEstimateInfo] = useState<{ usage: number; quota: number } | null>(null);
+  const [storageError, setStorageError] = useState('');
+  const [remoteEntries, setRemoteEntries] = useState<RemoteBrushPack[]>([]);
+  const [remoteState, setRemoteState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [remoteError, setRemoteError] = useState('');
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, { loaded: number; total: number }>>({});
+  const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>({});
+  const [qrBrush, setQrBrush] = useState<BrushParams | null>(null);
+  const [qrImportOpen, setQrImportOpen] = useState(false);
+  const catalogAbort = useRef<AbortController | null>(null);
+  const downloadAborts = useRef(new Map<string, AbortController>());
+  const remoteCatalogUrl = configuredRemoteCatalogUrl();
+  const downloadLimitBytes = megabytesToBytes(s.settings.assetMaxDownloadMB);
+  const installLimitBytes = megabytesToBytes(s.settings.assetMaxInstallMB);
+  const installedBytes = assets.reduce((n, asset) => n + asset.sizeBytes, 0);
   const installedIds = new Set(packs.map((p) => p.id));
-  const cats = ['All', ...Array.from(new Set(CATALOG.map((p) => p.category)))];
-  const install = (id: string) => { const d = CATALOG.find((p) => p.id === id)!; setWin({ packs: [...packs.filter((p) => p.id !== id), { id, name: d.name, version: d.version, source: 'catalog', category: d.category }] }); toast(`Installed “${d.name}” (${d.brushes().length} brushes)`, 'success'); };
-  const uninstall = (id: string) => { setWin({ packs: packs.filter((p) => p.id !== id) }); toast('Pack uninstalled'); };
-  const lib = allBrushes(s).map((b) => ({ ...b, ...(s.overrides[b.id] || {}) }));
-  const filteredLib = lib.filter((b) => (cat === 'All' || b.category === cat || b.category.includes(cat)) && (!q || (b.name + ' ' + b.tags.join(' ') + ' ' + b.category).toLowerCase().includes(q.toLowerCase())));
-  const importPack = async () => {
-    const f = await pickFile('.carbonpack,.carbonbrush,.json');
-    if (!f) return;
+  const storedById = new Map(assets.map((a) => [a.packId, a]));
+
+  const refreshAssetState = useCallback(async () => {
     try {
-      const { pack, duplicates, warnings } = parsePack(await f.text(), allBrushes(getApp()));
-      setWin({ packs: [...packs.filter((p) => p.id !== pack.id), pack] });
-      toast(`Imported “${pack.name}”: ${pack.brushes!.length} brushes${duplicates ? `, ${duplicates} duplicates skipped` : ''}`, 'success');
-      warnings.slice(0, 3).forEach((w) => toast(w, 'error'));
-    } catch (e) { toast('Import failed: ' + (e instanceof Error ? e.message : e), 'error'); }
+      const [items, estimate] = await Promise.all([listStoredBrushPacks(), storageEstimate()]);
+      setAssets(items);
+      setStorageEstimateInfo(estimate);
+      setStorageError('');
+    } catch (error) {
+      setStorageError(errorText(error));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshAssetState();
+    const refresh = () => { void refreshAssetState(); };
+    window.addEventListener('carbon-assets-changed', refresh);
+    return () => {
+      window.removeEventListener('carbon-assets-changed', refresh);
+      catalogAbort.current?.abort();
+      downloadAborts.current.forEach((controller) => controller.abort());
+      downloadAborts.current.clear();
+    };
+  }, [refreshAssetState]);
+
+  const bundledCards = useMemo<MarketCard[]>(() => CATALOG.map((def) => {
+    const brushes = def.brushes();
+    return {
+      id: def.id, installId: def.id, name: def.name, category: def.category, version: def.version,
+      description: def.description, creator: def.creator || null, license: def.license || null,
+      featured: def.featured === true, source: 'bundled', sizeBytes: measureBrushPackBytes({ id: def.id, name: def.name, category: def.category, version: def.version, brushes }), brushes,
+    };
+  }), []);
+  const remoteCards = useMemo<MarketCard[]>(() => remoteEntries.map((entry) => ({
+    id: `remote:${entry.id}`, installId: `remote:${entry.id}`, name: entry.name, category: entry.category,
+    version: entry.version, description: entry.description, creator: entry.creator, license: entry.license,
+    featured: entry.featured, source: 'remote', sizeBytes: entry.sizeBytes, remote: entry,
+  })), [remoteEntries]);
+  const marketCards = [...bundledCards, ...remoteCards];
+  const marketCategories = ['All', 'Featured', 'Installed', ...Array.from(new Set(marketCards.map((p) => p.category))).sort((a, b) => a.localeCompare(b))];
+  const lib = allBrushes(s).map((b) => ({ ...b, ...(s.overrides[b.id] || {}) }));
+  const libCategories = ['All', ...Array.from(new Set(lib.map((b) => b.category))).sort((a, b) => a.localeCompare(b))];
+  const filteredLib = lib.filter((b) => (libCat === 'All' || b.category === libCat || b.category.includes(libCat)) && (!q || (b.name + ' ' + b.tags.join(' ') + ' ' + b.category + ' ' + b.description).toLowerCase().includes(q.toLowerCase())));
+  const filteredCards = marketCards.filter((p) => {
+    const inst = packs.find((x) => x.id === p.installId);
+    const categoryMatch = cat === 'All' || (cat === 'Featured' ? p.featured : cat === 'Installed' ? !!inst : p.category === cat);
+    const queryMatch = !q || (p.name + ' ' + p.description + ' ' + p.category + ' ' + (p.creator || '')).toLowerCase().includes(q.toLowerCase());
+    return categoryMatch && queryMatch;
+  }).sort((a, b) => {
+    if (sort === 'featured' && a.featured !== b.featured) return a.featured ? -1 : 1;
+    if (sort === 'size') return a.sizeBytes - b.sizeBytes || a.name.localeCompare(b.name);
+    if (sort === 'brushes') {
+      const count = (card: MarketCard) => packs.find((p) => p.id === card.installId)?.brushes?.length ?? card.brushes?.length ?? 0;
+      return count(b) - count(a) || a.name.localeCompare(b.name);
+    }
+    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  });
+
+  const refresh = async () => refreshAssetState();
+  const checkCapacity = async (newSize: number, replaceId: string) => {
+    let latest: StoredBrushPack[];
+    let browserEstimate: { usage: number; quota: number } | null = null;
+    try {
+      const [items, estimate] = await Promise.all([listStoredBrushPacks(), storageEstimate()]);
+      latest = items;
+      browserEstimate = estimate;
+      setAssets(items);
+      setStorageEstimateInfo(estimate);
+    } catch (error) { toast(`Asset storage is unavailable: ${errorText(error)}`, 'error'); return false; }
+    const replacedSize = latest.find((asset) => asset.packId === replaceId)?.sizeBytes || 0;
+    const otherBytes = latest.reduce((n, asset) => n + (asset.packId === replaceId ? 0 : asset.sizeBytes), 0);
+    if (otherBytes + newSize > installLimitBytes) {
+      toast(`Not installed: ${formatAssetSize(otherBytes)} is already used by other brush packs and this pack needs ${formatAssetSize(newSize)}; the configured limit is ${formatAssetSize(installLimitBytes)}.`, 'error');
+      return false;
+    }
+    const estimate = browserEstimate;
+    if (estimate && estimate.quota > 0 && Math.max(0, estimate.usage - replacedSize) + newSize > estimate.quota) {
+      toast(`Not installed: the browser estimates this origin is near its ${formatAssetSize(estimate.quota)} storage quota. Export or remove unneeded data, or choose a smaller pack.`, 'error');
+      return false;
+    }
+    return true;
   };
+
+  const installBundled = async (def: PackDef, quiet = false) => {
+    try {
+      const current = useWin.getState().packs;
+      const existing = current.find((p) => p.id === def.id);
+      if (existing && existing.version >= def.version && !existing.missing) return true;
+      const brushes = def.brushes();
+      const size = measureBrushPackBytes({ id: def.id, name: def.name, category: def.category, version: def.version, brushes });
+      if (!await checkCapacity(size, def.id)) return false;
+      await storeBrushPackAsset({ id: def.id, name: def.name, category: def.category, version: def.version, source: 'catalog', brushes }, installLimitBytes);
+      const next: InstalledPack = { id: def.id, name: def.name, version: def.version, source: 'catalog', category: def.category, brushes };
+      setWin({ packs: [...useWin.getState().packs.filter((p) => p.id !== def.id), next] });
+      await refresh();
+      if (!quiet) toast(`Installed “${def.name}” · ${brushes.length} brushes · ${formatAssetSize(size)}`, 'success');
+      return true;
+    } catch (error) {
+      if (!quiet) toast(`Install failed: ${errorText(error)}`, 'error');
+      return false;
+    }
+  };
+
+  const installAllBundled = async () => {
+    const missing = CATALOG.filter((def) => !useWin.getState().packs.some((p) => p.id === def.id && p.version >= def.version && !p.missing));
+    const estimate = missing.reduce((n, def) => n + measureBrushPackBytes({ id: def.id, name: def.name, category: def.category, version: def.version, brushes: def.brushes() }), 0);
+    const answer = await confirmDialog('Install bundled brush packs?', `${missing.length} offline packs need about ${formatAssetSize(estimate)} of local storage. Existing user brushes and projects will not be changed.`, [
+      { label: 'Cancel', value: 'n' }, { label: 'Install', value: 'y', variant: 'primary' },
+    ]);
+    if (answer !== 'y') return;
+    let count = 0;
+    for (const def of missing) if (await installBundled(def, true)) count++;
+    toast(`${count} bundled packs installed or already current.`, count === missing.length ? 'success' : 'error');
+  };
+
+  const removePack = async (id: string) => {
+    const current = useWin.getState().packs;
+    const pack = current.find((p) => p.id === id);
+    if (!pack) return;
+    const answer = await confirmDialog(`Remove “${pack.name}”?`, 'Its brushes will stop appearing in the library; an active brush may fall back to the default. Strokes and settings already saved in existing artwork files are not edited. This does not remove custom brushes.', [
+      { label: 'Keep pack', value: 'n' }, { label: 'Remove pack', value: 'y', variant: 'danger' },
+    ]);
+    if (answer !== 'y') return;
+    try {
+      await removeStoredBrushPack(id);
+      setWin({ packs: useWin.getState().packs.filter((p) => p.id !== id) });
+      await refresh();
+      toast(`Removed “${pack.name}” from this device.`, 'success');
+    } catch (error) { toast(`Could not remove pack: ${errorText(error)}`, 'error'); }
+  };
+
+  const importPack = async () => {
+    const file = await pickFile('.carbonpack,.carbonbrush,.json');
+    if (!file) return;
+    if (file.size > downloadLimitBytes) {
+      toast(`Import is ${formatAssetSize(file.size)}; the configured per-pack limit is ${formatAssetSize(downloadLimitBytes)}. Change it in Storage settings if you trust this file.`, 'error');
+      return;
+    }
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      const probe = parsePack(text, [], downloadLimitBytes);
+      const existing = useWin.getState().packs.find((p) => p.id === probe.pack.id);
+      const replacingBrushIds = new Set(existing?.brushes?.map((brush) => brush.id) || []);
+      const { pack, duplicates, warnings } = parsePack(text, allBrushes(getApp()).filter((brush) => !replacingBrushIds.has(brush.id)), downloadLimitBytes);
+      if (existing) {
+        const answer = await confirmDialog(`Replace “${existing.name}”?`, 'A pack with this ID is already installed. Replacing it keeps other packs and all artwork files unchanged.', [
+          { label: 'Cancel', value: 'n' }, { label: 'Replace pack', value: 'y', variant: 'primary' },
+        ]);
+        if (answer !== 'y') return;
+      }
+      const size = measureBrushPackBytes({ id: pack.id, name: pack.name, category: pack.category, version: pack.version, brushes: pack.brushes || [] });
+      if (!await checkCapacity(size, pack.id)) return;
+      await storeBrushPackAsset({ ...pack, source: 'import', brushes: pack.brushes || [], downloadBytes: file.size }, installLimitBytes);
+      setWin({ packs: [...useWin.getState().packs.filter((p) => p.id !== pack.id), pack] });
+      await refresh();
+      toast(`Imported “${pack.name}”: ${pack.brushes!.length} brushes · ${formatAssetSize(size)} installed${duplicates ? ` · ${duplicates} duplicate brushes skipped` : ''}`, 'success');
+      warnings.slice(0, 3).forEach((warning) => toast(warning, 'error'));
+    } catch (error) { toast(`Import failed: ${errorText(error)}`, 'error'); }
+  };
+
+  const importQrPayload = async (payload: string): Promise<string | null> => {
+    try {
+      const probe = parseBrushQrPayload(payload, [], MAX_BRUSH_QR_BYTES);
+      if (useWin.getState().packs.some((pack) => pack.id === probe.pack.id)) return 'A pack with this ID is already installed. Remove it in Marketplace first; QR import will not replace packs silently.';
+      const { pack, duplicates, warnings } = parseBrushQrPayload(payload, allBrushes(getApp()), MAX_BRUSH_QR_BYTES);
+      const size = measureBrushPackBytes({ id: pack.id, name: pack.name, category: pack.category, version: pack.version, brushes: pack.brushes || [] });
+      if (!await checkCapacity(size, pack.id)) return 'The pack was not installed because a configured storage limit or browser quota was reached.';
+      await storeBrushPackAsset({ ...pack, source: 'import', brushes: pack.brushes || [], downloadBytes: new TextEncoder().encode(payload).byteLength }, installLimitBytes);
+      setWin({ packs: [...useWin.getState().packs.filter((item) => item.id !== pack.id), pack] });
+      await refresh();
+      toast(`Imported QR pack “${pack.name}” · ${pack.brushes?.length || 0} brushes${duplicates ? ` · ${duplicates} duplicates skipped` : ''}`, 'success');
+      warnings.slice(0, 3).forEach((warning) => toast(warning, 'error'));
+      return null;
+    } catch (error) { return errorText(error); }
+  };
+
+  const loadRemoteCatalog = async () => {
+    if (!remoteCatalogUrl) return;
+    catalogAbort.current?.abort();
+    const controller = new AbortController();
+    catalogAbort.current = controller;
+    setRemoteState('loading'); setRemoteError('');
+    try {
+      const entries = await fetchRemoteAssetCatalog(remoteCatalogUrl, { signal: controller.signal });
+      setRemoteEntries(entries);
+      setRemoteState('ready');
+      toast(`Validated ${entries.length} remote catalog entries. Packs are not downloaded until you choose one.`, 'success');
+    } catch (error) {
+      if (controller.signal.aborted) { setRemoteState('idle'); return; }
+      setRemoteError(errorText(error)); setRemoteState('error');
+    }
+  };
+
+  const installRemote = async (entry: RemoteBrushPack, retry = false) => {
+    const id = `remote:${entry.id}`;
+    const controller = new AbortController();
+    downloadAborts.current.set(id, controller);
+    setDownloadErrors((state) => ({ ...state, [id]: '' }));
+    setDownloadProgress((state) => ({ ...state, [id]: { loaded: 0, total: entry.sizeBytes } }));
+    try {
+      const rawBytes = await downloadRemoteBrushPack(entry, remoteCatalogUrl, downloadLimitBytes, {
+        signal: controller.signal,
+        onProgress: ({ loadedBytes }) => setDownloadProgress((state) => ({ ...state, [id]: { loaded: loadedBytes, total: entry.sizeBytes } })),
+      });
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(rawBytes);
+      const oldPack = useWin.getState().packs.find((pack) => pack.id === id);
+      const replacingBrushIds = new Set(oldPack?.brushes?.map((brush) => brush.id) || []);
+      const { pack: parsed, duplicates, warnings } = parsePack(text, allBrushes(getApp()).filter((brush) => !replacingBrushIds.has(brush.id)), downloadLimitBytes);
+      if (parsed.name !== entry.name || parsed.category !== entry.category || parsed.version !== entry.version) {
+        throw new Error('Downloaded pack metadata does not match the validated catalog entry.');
+      }
+      const pack: InstalledPack = { ...parsed, id, name: entry.name, category: entry.category, version: entry.version, source: 'remote' };
+      const size = measureBrushPackBytes({ id, name: pack.name, category: pack.category, version: pack.version, brushes: pack.brushes || [] });
+      if (!await checkCapacity(size, id)) return;
+      await storeBrushPackAsset({ id, name: pack.name, category: pack.category, version: pack.version, source: 'remote', brushes: pack.brushes || [], downloadBytes: rawBytes.byteLength }, installLimitBytes);
+      setWin({ packs: [...useWin.getState().packs.filter((p) => p.id !== id), pack] });
+      setDownloadErrors((state) => ({ ...state, [id]: '' }));
+      await refresh();
+      toast(`Installed verified “${pack.name}” · ${pack.brushes?.length || 0} brushes · ${formatAssetSize(rawBytes.byteLength)} downloaded${duplicates ? ` · ${duplicates} duplicates skipped` : ''}`, 'success');
+      warnings.slice(0, 3).forEach((warning) => toast(warning, 'error'));
+    } catch (error) {
+      if (controller.signal.aborted) toast(`Download ${retry ? 'retry ' : ''}canceled.`, 'info');
+      else {
+        const message = errorText(error);
+        setDownloadErrors((state) => ({ ...state, [id]: message }));
+        toast(`Remote pack install failed: ${message}`, 'error');
+      }
+    } finally {
+      downloadAborts.current.delete(id);
+      setDownloadProgress((state) => { const next = { ...state }; delete next[id]; return next; });
+    }
+  };
+
+  const removeOrphan = async (asset: StoredBrushPack) => {
+    const answer = await confirmDialog(`Remove stored “${asset.name}”?`, `This asset is not registered as installed. Its ${formatAssetSize(asset.sizeBytes)} stored bytes will be removed. User artwork and other assets are untouched.`, [
+      { label: 'Cancel', value: 'n' }, { label: 'Remove bytes', value: 'y', variant: 'danger' },
+    ]);
+    if (answer !== 'y') return;
+    try { await removeStoredBrushPack(asset.packId); await refresh(); toast('Orphaned asset removed.', 'success'); }
+    catch (error) { toast(`Could not clean asset: ${errorText(error)}`, 'error'); }
+  };
+
   return (
     <div className="absolute inset-0 overflow-y-auto bg-[#141416] p-6 text-neutral-200">
       <div className="mx-auto max-w-6xl space-y-4">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-lg font-semibold">Brush Library</h1>
-          <div className="flex gap-1"><Btn active={tab === 'market'} onClick={() => setTab('market')}>Market (local catalog)</Btn><Btn active={tab === 'library'} onClick={() => setTab('library')}>My library · {lib.length}</Btn></div>
-          <div className="ml-auto flex items-center gap-1 rounded-md border border-white/10 bg-neutral-900 px-2"><Search size={12} className="text-neutral-500" /><input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.stopPropagation()} placeholder="Search…" className="w-48 bg-transparent py-1.5 text-xs outline-none" /></div>
-          <Btn onClick={importPack}><Upload size={11} /> Import pack</Btn>
+          <h1 className="text-lg font-semibold">Brushes & Assets</h1>
+          <div className="flex gap-1">
+            <Btn active={tab === 'market'} onClick={() => setTab('market')}>Marketplace</Btn>
+            <Btn active={tab === 'library'} onClick={() => setTab('library')}>My library · {lib.length}</Btn>
+            <Btn active={tab === 'storage'} onClick={() => setTab('storage')}><HardDrive size={11} /> Storage · {assets.length}</Btn>
+            <Btn active={tab === 'lab'} onClick={() => setTab('lab')}><Brush size={11} /> Brush Lab</Btn>
+            <Btn active={tab === 'eraser'} onClick={() => setTab('eraser')}><Trash2 size={11} /> Custom Erasers</Btn>
+          </div>
+          {tab !== 'storage' && tab !== 'lab' && tab !== 'eraser' && <div className="ml-auto flex items-center gap-1 rounded-md border border-white/10 bg-neutral-900 px-2"><Search size={12} className="text-neutral-500" /><input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.stopPropagation()} placeholder="Search…" className="w-48 bg-transparent py-1.5 text-xs outline-none" /></div>}
+          {tab === 'library' && <Btn onClick={importPack}><Upload size={11} /> Import pack</Btn>}
+          {tab === 'market' && <Btn onClick={importPack}><Upload size={11} /> Import pack</Btn>}
         </div>
-        <div className="rounded-md border border-sky-500/20 bg-sky-500/5 px-3 py-2 text-[11px] text-sky-200">This catalog ships with CARBON and installs offline. No online brush service is connected, so nothing is downloaded. Packs are plain JSON brush data: they can't run code and are validated on import.</div>
-        <div className="flex flex-wrap gap-1">{cats.map((c) => <Btn key={c} active={cat === c} onClick={() => setCat(c)}>{c}</Btn>)}</div>
-        {tab === 'market' ? (
+
+        {tab === 'market' && (
           <>
-            <div className="flex gap-2"><Btn variant="primary" onClick={() => setWin({ packs: [...packs.filter((p) => p.source === 'import'), ...CATALOG.map((d) => ({ id: d.id, name: d.name, version: d.version, source: 'catalog' as const, category: d.category }))] })}>Install all packs</Btn><span className="self-center text-[11px] text-neutral-500">{CATALOG.reduce((a, p) => a + p.brushes().length, 0)} catalog brushes · {lib.length} in your library</span></div>
+            <div className="rounded-md border border-sky-500/20 bg-sky-500/5 px-3 py-2 text-[11px] text-sky-100">
+              <div className="flex flex-wrap items-center gap-2"><ShieldCheck size={14} className="text-sky-300" /><strong>Local-first brush marketplace</strong><span className="text-sky-200/80">Bundled packs install offline. JSON imports are validated; imported data cannot execute code.</span></div>
+              {remoteCatalogUrl ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-neutral-300">Optional remote source configured · HTTPS + same-origin assets + SHA-256 verification.</span>
+                  <Btn disabled={remoteState === 'loading'} onClick={loadRemoteCatalog}><RefreshCw size={11} className={remoteState === 'loading' ? 'animate-spin' : ''} />{remoteState === 'loading' ? 'Checking…' : remoteState === 'ready' ? 'Refresh remote catalog' : 'Check remote catalog'}</Btn>
+                  {remoteState === 'loading' && <Btn onClick={() => catalogAbort.current?.abort()}><X size={11} /> Cancel</Btn>}
+                  {remoteState === 'ready' && <span className="text-emerald-300">{remoteEntries.length} validated entries; no assets downloaded yet.</span>}
+                  {remoteState === 'error' && <span className="text-red-300">Remote catalog unavailable: {remoteError}</span>}
+                </div>
+              ) : <div className="mt-1 text-sky-200/80">No remote catalog is configured in this build. Online browsing/downloads are unavailable; there is no fake download or popularity data. Set <code>VITE_CARBON_ASSET_CATALOG_URL</code> only when a real HTTPS catalog and assets are hosted.</div>}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Btn variant="primary" onClick={installAllBundled}><Download size={11} /> Install all bundled packs</Btn>
+              <span className="text-[11px] text-neutral-500">{CATALOG.length} offline packs · {bundledCards.reduce((n, p) => n + (p.brushes?.length || 0), 0)} generated brushes · engine v{ENGINE_VERSION}</span>
+              <Select value={sort} onChange={(v) => setSort(v)} options={[{ value: 'featured', label: 'Featured first · curated' }, { value: 'name', label: 'Name' }, { value: 'brushes', label: 'Brush count' }, { value: 'size', label: 'Package size' }]} />
+            </div>
+            <div className="flex flex-wrap gap-1">{marketCategories.map((category) => <Btn key={category} active={cat === category} onClick={() => setCat(category)}>{category}</Btn>)}</div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {CATALOG.filter((p) => (cat === 'All' || p.category === cat) && (!q || (p.name + p.description + p.category).toLowerCase().includes(q.toLowerCase()))).map((p) => {
-                const inst = packs.find((x) => x.id === p.id);
-                const br = p.brushes();
+              {filteredCards.map((card) => {
+                const installed = packs.find((p) => p.id === card.installId);
+                const existingAsset = storedById.get(card.installId);
+                const previewBrushes = installed?.brushes?.length ? installed.brushes : card.brushes || [];
+                const running = downloadProgress[card.installId];
+                const downloadError = downloadErrors[card.installId];
+                const currentSize = existingAsset?.sizeBytes ?? card.sizeBytes;
                 return (
-                  <div key={p.id} className="space-y-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
-                    <div className="flex items-start justify-between gap-2"><div><div className="text-sm font-medium">{p.name}</div><div className="text-[10px] uppercase tracking-wide text-neutral-500">{p.category} · {br.length} brushes · v{p.version}</div></div>
-                      {inst ? <span className="flex items-center gap-1 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-300"><Check size={10} /> Installed v{inst.version}</span> : <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-neutral-400">Not installed</span>}</div>
-                    <p className="text-[11px] text-neutral-400">{p.description}</p>
-                    <div className="grid grid-cols-3 gap-1">{br.slice(0, 3).map((b) => <PackPreview key={b.id} b={b} />)}</div>
-                    <div className="flex gap-1">
-                      {!inst ? <Btn variant="primary" onClick={() => install(p.id)}><Download size={11} /> Install</Btn> : <>
-                        {inst.version < p.version && <Btn variant="primary" onClick={() => install(p.id)}>Update</Btn>}
-                        <Btn onClick={() => uninstall(p.id)}><Trash2 size={11} /> Uninstall</Btn>
-                        <Btn onClick={() => { setTab('library'); setCat(p.category); }}>Browse</Btn>
-                      </>}
+                  <div key={card.id} className="space-y-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0"><div className="flex flex-wrap items-center gap-1 text-sm font-medium">{card.name}{card.featured && <span className="rounded bg-amber-400/15 px-1 text-[9px] uppercase tracking-wide text-amber-200">Curated</span>}</div><div className="text-[10px] uppercase tracking-wide text-neutral-500">{card.category} · {previewBrushes.length || (card.remote ? 'preview after install' : 0)} brushes · v{card.version}</div></div>
+                      {installed && !installed.missing ? <span className="flex shrink-0 items-center gap-1 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-300"><Check size={10} /> Installed v{installed.version}</span> : installed?.missing ? <span className="rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] text-red-300">Asset missing</span> : <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-neutral-400">Available</span>}
+                    </div>
+                    <p className="min-h-8 text-[11px] text-neutral-400">{card.description}</p>
+                    <div className="text-[10px] text-neutral-500">{card.source === 'bundled' ? 'Bundled JSON package' : 'Remote download'} · {formatAssetSize(card.sizeBytes)} · free · brush engine v{ENGINE_VERSION}</div>
+                    <div className="text-[10px] text-neutral-500">Creator: {card.creator || 'not provided'} · License: {card.license || 'not provided'}</div>
+                    {previewBrushes.length ? <div className="grid grid-cols-3 gap-1">{previewBrushes.slice(0, 3).map((b) => <PackPreview key={b.id} b={b} />)}</div> : <div className="rounded bg-black/20 px-2 py-3 text-center text-[10px] text-neutral-500">No local preview asset yet; it will be shown only after the downloaded pack is validated and installed.</div>}
+                    {installed && <div className="text-[10px] text-neutral-400">Installed payload: {formatAssetSize(currentSize)}{existingAsset?.downloadBytes !== null && existingAsset?.downloadBytes !== undefined ? ` · original transfer: ${formatAssetSize(existingAsset.downloadBytes)}` : ''}</div>}
+                    {running && <div className="space-y-1"><div className="h-1.5 overflow-hidden rounded bg-white/10"><div className="h-full bg-[#E8913A]" style={{ width: `${Math.min(100, Math.max(0, running.loaded / Math.max(1, running.total) * 100))}%` }} /></div><div className="text-[10px] text-neutral-400">Downloading {formatAssetSize(running.loaded)} / {formatAssetSize(running.total)}</div></div>}
+                    {downloadError && <div className="text-[10px] text-red-300">{downloadError}</div>}
+                    <div className="flex flex-wrap gap-1">
+                      {card.source === 'bundled' ? (
+                        !installed || installed.missing || installed.version < card.version ? <Btn variant="primary" onClick={() => { const def = CATALOG.find((p) => p.id === card.installId); if (def) void installBundled(def); }}><Download size={11} /> {installed ? 'Repair / update' : 'Install offline'}</Btn> : <Btn onClick={() => setTab('library')}>Browse brushes</Btn>
+                      ) : running ? <Btn onClick={() => downloadAborts.current.get(card.installId)?.abort()}><X size={11} /> Cancel download</Btn> : installed && !installed.missing && installed.version >= card.version ? <Btn onClick={() => setTab('library')}>Browse installed</Btn> : <Btn variant="primary" disabled={!remoteCatalogUrl || remoteState !== 'ready'} onClick={() => card.remote && void installRemote(card.remote, !!downloadError)}><CloudDownload size={11} />{downloadError ? 'Retry download' : 'Download & verify'}</Btn>}
+                      {installed && <Btn variant="danger" onClick={() => void removePack(installed.id)}><Trash2 size={11} /> Remove</Btn>}
                     </div>
                   </div>
                 );
               })}
             </div>
-            {packs.filter((p) => p.source === 'import').length > 0 && (
-              <div className="space-y-1"><SectionTitle>Imported packs</SectionTitle>
-                {packs.filter((p) => p.source === 'import').map((p) => (
-                  <div key={p.id} className="flex items-center gap-2 rounded border border-white/10 px-3 py-2 text-xs"><span className="flex-1">{p.name} <span className="text-neutral-500">· {p.brushes?.length} brushes · v{p.version}</span></span>
-                    <Btn onClick={() => download(new Blob([exportPack(p.name, p.brushes || [])], { type: 'application/json' }), p.name + '.carbonpack')}><Download size={11} /></Btn>
-                    <Btn onClick={() => uninstall(p.id)}><Trash2 size={11} /> Uninstall</Btn></div>
-                ))}
-              </div>
-            )}
+            {packs.filter((p) => p.source !== 'catalog').length > 0 && <div className="space-y-1"><SectionTitle>Installed imports and remote packs</SectionTitle>
+              {packs.filter((p) => p.source !== 'catalog').map((pack) => {
+                const stored = storedById.get(pack.id);
+                return <div key={pack.id} className="flex flex-wrap items-center gap-2 rounded border border-white/10 px-3 py-2 text-xs"><span className="min-w-0 flex-1 truncate">{pack.name} <span className="text-neutral-500">· {pack.source} · {pack.brushes?.length || 0} brushes · v{pack.version} · {formatAssetSize(stored?.sizeBytes || 0)}</span></span>
+                  <Btn onClick={() => download(new Blob([exportPack(pack.name, pack.brushes || [], pack.id, pack.category, pack.version)], { type: 'application/json' }), pack.name + '.carbonpack')}><Download size={11} /> Export</Btn>
+                  <Btn onClick={() => { setTab('library'); setLibCat(pack.category); }}>Browse</Btn><Btn variant="danger" onClick={() => void removePack(pack.id)}><Trash2 size={11} /> Remove</Btn></div>;
+              })}
+            </div>}
           </>
-        ) : (
+        )}
+
+        {tab === 'library' && (
           <>
-            <div className="flex items-center gap-2">
+            <div className="rounded-md border border-white/10 bg-white/[0.02] px-3 py-2 text-[10px] text-neutral-400">Brush definition sizes below are exact UTF-8 JSON byte counts for the exported definition, not compressed image sizes. Pack files and project artwork are stored separately.</div>
+            <div className="flex flex-wrap items-center gap-2">
               <Btn active={view === 'grid'} onClick={() => setWin({ libView: 'grid' })}>Grid</Btn><Btn active={view === 'list'} onClick={() => setWin({ libView: 'list' })}>List</Btn>
               <span className="text-[11px] text-neutral-500">{filteredLib.length} brushes</span>
+              <div className="min-w-[150px] flex-1"><Select value={libCat} onChange={setLibCat} options={libCategories.map((category) => ({ value: category, label: category }))} /></div>
+              <Btn onClick={() => setQrImportOpen(true)}><QrCode size={11} /> Import QR</Btn>
               <Btn className="ml-auto" onClick={() => setApp({ dialog: 'fusion' })}><Sparkles size={11} /> Brush Fusion…</Btn>
-              <Btn onClick={() => download(new Blob([exportPack('My CARBON brushes', s.customBrushes)], { type: 'application/json' }), 'my-carbon-brushes.carbonpack')}><Download size={11} /> Export my presets</Btn>
+              <Btn onClick={() => download(new Blob([exportPack('My CARBON brushes', s.customBrushes, 'my-carbon-brushes', 'Custom', 1)], { type: 'application/json' }), 'my-carbon-brushes.carbonpack')}><Download size={11} /> Export brushes</Btn>
+              <Btn onClick={() => download(new Blob([exportPack('My CARBON eraser tips', s.customErasers, 'my-carbon-eraser-tips', 'Erasers', 1)], { type: 'application/json' }), 'my-carbon-eraser-tips.carbonpack')}><Download size={11} /> Export erasers</Btn>
             </div>
             <div className={view === 'grid' ? 'grid gap-2 sm:grid-cols-3 lg:grid-cols-5' : 'space-y-1'}>
-              {filteredLib.slice(0, limit).map((b) => <LibItem key={b.id} b={b} grid={view === 'grid'} active={b.id === s.brushId} fav={s.favorites.includes(b.id)} modified={!!s.overrides[b.id]} />)}
+              {filteredLib.slice(0, limit).map((b) => <LibItem key={b.id} b={b} grid={view === 'grid'} active={b.id === (s.tool === 'eraser' ? s.eraserBrushId : s.brushId)} fav={s.favorites.includes(b.id)} modified={!!s.overrides[b.id]} onQr={setQrBrush} />)}
             </div>
             {filteredLib.length > limit && <Btn onClick={() => setLimit(limit + 90)}>Show more ({filteredLib.length - limit} remaining)</Btn>}
           </>
         )}
-        {installedIds.size === 0 && tab === 'market' && <p className="text-[11px] text-neutral-500">Tip: install packs to grow your library past 500 distinct brushes.</p>}
+
+        {tab === 'lab' && <BrushLab kind="brush" />}
+        {tab === 'eraser' && <BrushLab kind="eraser" />}
+
+        {tab === 'storage' && (
+          <div className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4"><div className="flex items-center gap-2 text-xs text-neutral-300"><HardDrive size={14} /> Installed brush packs</div><div className="mt-2 text-xl font-semibold">{formatAssetSize(installedBytes)}</div><div className="text-[10px] text-neutral-500">{assets.length} validated pack assets · exact stored JSON bytes</div></div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4"><div className="text-xs text-neutral-300">Browser origin storage</div><div className="mt-2 text-xl font-semibold">{storageEstimateInfo ? `${formatAssetSize(storageEstimateInfo.usage)} / ${formatAssetSize(storageEstimateInfo.quota)}` : 'Unavailable'}</div><div className="text-[10px] text-neutral-500">Browser-reported origin usage/quota; includes project data and settings, not OS free disk space.</div></div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4"><div className="text-xs text-neutral-300">Remote availability</div><div className="mt-2 text-sm font-semibold">{remoteCatalogUrl ? 'Optional endpoint configured' : 'No catalog configured'}</div><div className="text-[10px] text-neutral-500">{remoteCatalogUrl ? 'Nothing is fetched until you choose Check remote catalog.' : 'Bundled packs remain offline and available.'}</div></div>
+            </div>
+            {storageError && <div className="rounded border border-red-500/30 bg-red-500/5 p-2 text-xs text-red-200">Could not read the asset store: {storageError}</div>}
+            <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+              <SectionTitle>Safety limits · apply to new imports/downloads</SectionTitle>
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="text-[11px] text-neutral-300">Maximum per-pack import/download (MB)
+                  <NumInput value={s.settings.assetMaxDownloadMB} min={1} max={MAX_BRUSH_PACK_BYTES / (1024 * 1024)} onChange={(value) => updateSettings({ assetMaxDownloadMB: Math.max(1, Math.min(MAX_BRUSH_PACK_BYTES / (1024 * 1024), Math.round(value || 1))) })} />
+                  <span className="text-[10px] text-neutral-500">Default {DEFAULT_MAX_BRUSH_PACK_BYTES / (1024 * 1024)} MB · hard safety ceiling {MAX_BRUSH_PACK_BYTES / (1024 * 1024)} MB.</span>
+                </label>
+                <label className="text-[11px] text-neutral-300">Maximum installed brush-pack storage (MB)
+                  <NumInput value={s.settings.assetMaxInstallMB} min={1} max={4096} onChange={(value) => updateSettings({ assetMaxInstallMB: Math.max(1, Math.min(4096, Math.round(value || 1))) })} />
+                  <span className="text-[10px] text-neutral-500">Default 500 MB · existing assets are never silently removed if the limit is lowered.</span>
+                </label>
+              </div>
+            </div>
+            <div className="flex items-center justify-between"><div><SectionTitle>Installed assets</SectionTitle><div className="text-[10px] text-neutral-500">Downloads/import source bytes and installed normalized bytes are reported separately where known.</div></div><Btn onClick={() => void refreshAssetState()}><RefreshCw size={11} /> Refresh</Btn></div>
+            {assets.length === 0 ? <p className="rounded border border-white/10 p-4 text-xs text-neutral-500">No brush packs are installed yet. Bundled assets are generated locally; install a pack from Marketplace to add it here.</p> : <div className="space-y-1">
+              {assets.map((asset) => {
+                const registered = packs.some((p) => p.id === asset.packId);
+                let brushCount = packs.find((p) => p.id === asset.packId)?.brushes?.length;
+                if (brushCount === undefined && asset.source === 'catalog') brushCount = CATALOG.find((p) => p.id === asset.packId)?.brushes().length;
+                return <div key={asset.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2">
+                  <div className="min-w-0 flex-1"><div className="truncate text-xs font-medium">{asset.name}{!registered && <span className="ml-2 text-amber-300">Unregistered stored asset</span>}</div><div className="text-[10px] text-neutral-500">{asset.category} · {brushCount ?? 'unknown'} brushes · {asset.source} · pack v{asset.version} · engine v{asset.engineVersion}</div></div>
+                  <div className="text-right text-[10px] text-neutral-400">Installed {formatAssetSize(asset.sizeBytes)}{asset.downloadBytes !== null ? <div>Input/download {formatAssetSize(asset.downloadBytes)}</div> : <div>Bundled locally · no download</div>}</div>
+                  <Btn onClick={() => download(new Blob([asset.bytes.slice().buffer as ArrayBuffer], { type: 'application/json' }), asset.name + '.carbonpack')}><Download size={11} /> Export</Btn>
+                  {registered ? <Btn variant="danger" onClick={() => void removePack(asset.packId)}><Trash2 size={11} /> Remove</Btn> : <Btn variant="danger" onClick={() => void removeOrphan(asset)}><Trash2 size={11} /> Clean orphan</Btn>}
+                </div>;
+              })}
+            </div>}
+            <div className="text-[10px] text-neutral-500">Asset bytes are local to this installation. Removing a pack requires confirmation and does not rewrite artwork files; clearing browser/app storage outside CARBON can still remove local data.</div>
+          </div>
+        )}
+
+        {installedIds.size === 0 && tab === 'market' && <p className="text-[11px] text-neutral-500">No packs installed yet. Built-in application brushes remain available; install any bundled pack offline to expand the library.</p>}
+      </div>
+      {qrBrush && <BrushQrDialog brush={qrBrush} onClose={() => setQrBrush(null)} />}
+      {qrImportOpen && <BrushQrImportDialog onClose={() => setQrImportOpen(false)} onImport={importQrPayload} />}
+    </div>
+  );
+}
+
+function BrushLab({ kind = 'brush' }: { kind?: 'brush' | 'eraser' }) {
+  const s = useApp();
+  const isEraser = kind === 'eraser';
+  const library = allBrushes(s).map((brush) => ({ ...brush, ...(s.overrides[brush.id] || {}) }));
+  const initialId = isEraser ? s.eraserBrushId : s.brushId;
+  const initial = brushById(initialId, s) || library[0];
+  const savedPresets = isEraser ? s.customErasers : s.customBrushes;
+  const [baseId, setBaseId] = useState(initial?.id || 'pencil-hb');
+  const [draft, setDraft] = useState<BrushParams>(() => ({
+    ...(initial || library[0]),
+    id: uid('lab-'),
+    name: `${initial?.name || 'Brush'} ${kind === 'eraser' ? 'Eraser' : 'Lab'}`,
+    builtin: false,
+    tags: [...(initial?.tags || ['custom'])],
+  }));
+  const [tagsText, setTagsText] = useState((initial?.tags || ['custom']).join(', '));
+  const [collectionId, setCollectionId] = useState('');
+  const [folderName, setFolderName] = useState('');
+  const [query, setQuery] = useState('');
+  const [savedId, setSavedId] = useState('');
+  const visibleBases = library.filter((brush) => !query || `${brush.name} ${brush.category} ${brush.tags.join(' ')}`.toLowerCase().includes(query.toLowerCase())).slice(0, 80);
+  const updateDraft = (patch: Partial<BrushParams>) => { setSavedId(''); setDraft((current) => ({ ...current, ...patch, builtin: false })); };
+
+  const chooseBase = (id: string) => {
+    const source = library.find((brush) => brush.id === id);
+    if (!source) return;
+    setBaseId(id);
+    setDraft({ ...source, id: uid('lab-'), name: `${source.name} ${isEraser ? 'Eraser' : 'Lab'}`, builtin: false, tags: [...source.tags] });
+    setTagsText(source.tags.join(', '));
+    setSavedId('');
+  };
+
+  const createCollection = () => {
+    const name = folderName.trim().slice(0, 40);
+    if (!name) return toast('Enter a folder name first.', 'error');
+    if (s.collections.some((item) => item.name.toLowerCase() === name.toLowerCase())) return toast('A folder with that name already exists.', 'error');
+    const id = uid('col-');
+    setApp({ collections: [...getApp().collections, { id, name, ids: [] }] });
+    setCollectionId(id);
+    setFolderName('');
+    toast(`Created brush folder “${name}”.`, 'success');
+  };
+
+  const saveBrush = async () => {
+    const name = draft.name.trim().slice(0, 60);
+    const category = draft.category.trim().slice(0, 40) || 'Custom';
+    const description = draft.description.trim().slice(0, 300);
+    if (!name) return toast('Give this brush a name before saving.', 'error');
+    const tags = [...new Set(tagsText.split(',').map((tag) => tag.trim().slice(0, 40)).filter(Boolean))].slice(0, 12);
+    const current = getApp();
+    const targetPresets = isEraser ? current.customErasers : current.customBrushes;
+    const existing = savedId ? targetPresets.find((item) => item.id === savedId) : undefined;
+    const brush: BrushParams = { ...draft, id: existing?.id || uid(isEraser ? 'ce-' : 'cb-'), name, category, description, tags, builtin: false, version: ENGINE_VERSION };
+    if (brush.stamp && brush.stamp.length > 400_000) return toast('This stamp is too large for the current custom-brush storage format; use a smaller image.', 'error');
+    if (brush.stamp) {
+      await ensureStamp(brush.stamp);
+      if (missingStamps.has(brush.stamp)) return toast('The brush stamp could not be decoded; it was not saved.', 'error');
+    }
+    const collections = current.collections.map((item) => {
+      const ids = item.ids.filter((id) => id !== brush.id);
+      return item.id === collectionId ? { ...item, ids: [...ids, brush.id] } : { ...item, ids };
+    });
+    const nextPresets = existing ? targetPresets.map((item) => item.id === existing.id ? brush : item) : [...targetPresets, brush];
+    if (isEraser) setApp({ customErasers: nextPresets, collections });
+    else setApp({ customBrushes: nextPresets, collections });
+    setSavedId(brush.id);
+    if (isEraser) { setTool('eraser'); selectBrush(brush.id); }
+    toast(`Saved “${brush.name}” as a local custom ${isEraser ? 'eraser tip' : 'brush'} · ${formatAssetSize(measureBrushDefinitionBytes(brush))}`, 'success');
+  };
+
+  const forkSaved = (brush: BrushParams) => {
+    setBaseId(brush.id);
+    setDraft({ ...brush, id: uid('lab-'), name: `${brush.name} Variant`, tags: [...brush.tags], builtin: false });
+    setTagsText(brush.tags.join(', '));
+    setSavedId('');
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-base font-semibold">{isEraser ? 'Custom Eraser Studio' : 'Brush Lab'}</h2><p className="mt-1 max-w-2xl text-[11px] text-neutral-400">Edit an isolated draft with the actual Carbon brush engine and live preview, then save a separate local {isEraser ? 'eraser tip' : 'brush preset'}. The source asset is not changed.</p></div><Btn variant="primary" onClick={() => void saveBrush()}><Check size={12} /> {savedId ? `Update ${isEraser ? 'eraser tip' : 'brush'}` : `Save ${isEraser ? 'eraser tip' : 'custom brush'}`}</Btn></div>
+      <div className="grid items-start gap-4 xl:grid-cols-[250px_minmax(360px,1fr)_260px]">
+        <div className="space-y-3 rounded-xl border border-white/10 bg-white/[0.02] p-3">
+          <SectionTitle>Start from a brush</SectionTitle>
+          <input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => event.stopPropagation()} placeholder="Search brushes…" className="w-full rounded border border-white/10 bg-neutral-900 px-2 py-1.5 text-xs text-white outline-none" />
+          <Select label="Base" value={baseId} onChange={chooseBase} options={visibleBases.map((brush) => ({ value: brush.id, label: `${brush.name} · ${brush.category}` }))} />
+          <div className="text-[10px] text-neutral-500">Showing up to 80 matching brushes. Choosing a base copies its current parameters into an isolated draft.</div>
+          <SectionTitle>Preset details</SectionTitle>
+          <label className="block text-[10px] text-neutral-400">Category<input value={draft.category} maxLength={40} onChange={(event) => updateDraft({ category: event.target.value })} className="mt-1 w-full rounded border border-white/10 bg-neutral-900 px-2 py-1.5 text-xs text-white outline-none" /></label>
+          <label className="block text-[10px] text-neutral-400">Description<textarea value={draft.description} maxLength={300} onChange={(event) => updateDraft({ description: event.target.value })} rows={4} className="mt-1 w-full resize-y rounded border border-white/10 bg-neutral-900 px-2 py-1.5 text-xs text-white outline-none" /></label>
+          <label className="block text-[10px] text-neutral-400">Tags · comma separated<input value={tagsText} onChange={(event) => { setTagsText(event.target.value); updateDraft({ tags: event.target.value.split(',').map((tag) => tag.trim().slice(0, 40)).filter(Boolean).slice(0, 12) }); }} className="mt-1 w-full rounded border border-white/10 bg-neutral-900 px-2 py-1.5 text-xs text-white outline-none" /></label>
+          <Select label="Folder" value={collectionId} onChange={setCollectionId} options={[{ value: '', label: 'No folder' }, ...s.collections.map((item) => ({ value: item.id, label: item.name }))]} />
+          <div className="flex gap-1"><input value={folderName} maxLength={40} onChange={(event) => setFolderName(event.target.value)} onKeyDown={(event) => { event.stopPropagation(); if (event.key === 'Enter') createCollection(); }} placeholder="New folder name" className="min-w-0 flex-1 rounded border border-white/10 bg-neutral-900 px-2 py-1 text-[10px] text-white outline-none" /><Btn onClick={createCollection}><Plus size={11} /> Folder</Btn></div>
+          <div className="rounded bg-black/20 p-2 text-[10px] text-neutral-500">Draft JSON definition: {formatAssetSize(measureBrushDefinitionBytes(draft))} · Brush engine v{ENGINE_VERSION}</div>
+          {savedId && <div className="rounded border border-emerald-500/20 bg-emerald-500/5 p-2 text-[10px] text-emerald-300">Saved locally. Continue editing this draft or fork the saved brush from My custom brushes.</div>}
+        </div>
+        <div className="min-w-0 rounded-xl border border-white/10 bg-white/[0.02] p-3"><BrushStudio draft={draft} onDraftChange={updateDraft} /></div>
+        <div className="space-y-2 rounded-xl border border-white/10 bg-white/[0.02] p-3">
+          <SectionTitle>{isEraser ? 'My custom eraser tips' : 'My custom brushes'} · {savedPresets.length}</SectionTitle>
+          {!savedPresets.length && <p className="text-[10px] text-neutral-500">Saved {isEraser ? 'eraser tips' : 'presets'} will appear here.</p>}
+          <div className="max-h-[70vh] space-y-1 overflow-y-auto">{[...savedPresets].reverse().map((brush) => <div key={brush.id} className="flex items-center gap-1 rounded border border-white/5 px-2 py-1.5"><button onClick={() => { if (isEraser) { setTool('eraser'); selectBrush(brush.id); } else selectBrush(brush.id); }} title={isEraser ? 'Use eraser tip' : 'Use brush'} className="min-w-0 flex-1 truncate text-left text-[10px] text-neutral-200">{brush.name}<span className="block truncate text-[9px] text-neutral-500">{brush.category} · {formatAssetSize(measureBrushDefinitionBytes(brush))}</span></button><Btn title="Edit a new variant; original stays unchanged" onClick={() => forkSaved(brush)}><Copy size={10} /> Fork</Btn></div>)}</div>
+        </div>
       </div>
     </div>
   );
 }
 
-function LibItem({ b, grid, active, fav, modified }: { b: BrushParams; grid: boolean; active: boolean; fav: boolean; modified: boolean }) {
+function BrushQrDialog({ brush, onClose }: { brush: BrushParams; onClose: () => void }) {
+  const [imageUrl, setImageUrl] = useState('');
+  const [payload, setPayload] = useState('');
+  const [error, setError] = useState('');
+  const [shareBusy, setShareBusy] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    try {
+      const text = makeBrushQrPayload({ id: `share-${brush.id}`, name: brush.name, category: brush.category, brushes: [brush], version: 1 });
+      setPayload(text);
+      void QRCode.toDataURL(text, { errorCorrectionLevel: 'M', margin: 3, width: 384, color: { dark: '#151515FF', light: '#FFFFFFFF' } })
+        .then((url) => { if (live) { setImageUrl(url); setError(''); } })
+        .catch((reason: unknown) => { if (live) setError(errorText(reason)); });
+    } catch (reason) {
+      setImageUrl(''); setPayload(''); setError(errorText(reason));
+    }
+    return () => { live = false; };
+  }, [brush]);
+
+  const savePng = () => {
+    try {
+      const encoded = imageUrl.split(',')[1];
+      if (!encoded) throw new Error('QR image is not ready.');
+      const bytes = Uint8Array.from(atob(encoded), (value) => value.charCodeAt(0));
+      download(new Blob([bytes.buffer as ArrayBuffer], { type: 'image/png' }), `${brush.name.replace(/[^a-z0-9_-]+/gi, '-').slice(0, 50) || 'carbon-brush'}.png`);
+    } catch (reason) { toast(`Could not save QR image: ${errorText(reason)}`, 'error'); }
+  };
+
+  const copyPayload = async () => {
+    try { await navigator.clipboard.writeText(payload); toast('QR payload copied locally.', 'success'); }
+    catch (reason) { toast(`Clipboard unavailable: ${errorText(reason)}`, 'error'); }
+  };
+
+  const sharePayload = async () => {
+    if (!navigator.share) { toast('Device text sharing is not available here; save the QR PNG instead.', 'info'); return; }
+    setShareBusy(true);
+    try { await navigator.share({ title: `Carbon brush: ${brush.name}`, text: payload }); }
+    catch (reason) { if (!(reason instanceof DOMException && reason.name === 'AbortError')) toast(`Share chooser failed: ${errorText(reason)}`, 'error'); }
+    finally { setShareBusy(false); }
+  };
+
+  return (
+    <Modal title={`Share brush as QR · ${brush.name}`} width={560} onClose={onClose} footer={<Btn onClick={onClose}>Close</Btn>}>
+      <div className="space-y-3">
+        {error ? <div className="rounded border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-200">{error}<p className="mt-2 text-neutral-400">Brushes containing stamp images or payloads over {MAX_BRUSH_QR_BYTES} bytes should be shared as a validated .carbonpack file.</p></div> : imageUrl ? <div className="flex justify-center rounded-lg bg-white p-3"><img src={imageUrl} width={320} height={320} alt={`Local QR code for brush ${brush.name}`} /></div> : <div className="p-8 text-center text-xs text-neutral-500">Preparing QR locally…</div>}
+        {payload && <div className="text-[10px] text-neutral-500">Carbon brush QR v1 · {new TextEncoder().encode(payload).byteLength} bytes · contains brush parameters only · no network request.</div>}
+        <p className="text-xs text-neutral-400">The PNG can be scanned or chosen as an image on another Carbon installation. Share opens the operating-system chooser; Carbon does not upload the brush. Only choose a destination you trust.</p>
+        <div className="flex flex-wrap gap-2"><Btn disabled={!imageUrl} variant="primary" onClick={savePng}><Download size={12} /> Save QR PNG</Btn><Btn disabled={!payload} onClick={() => void copyPayload()}>Copy payload</Btn><Btn disabled={!payload || shareBusy} onClick={() => void sharePayload()}>Share text…</Btn></div>
+      </div>
+    </Modal>
+  );
+}
+
+function BrushQrImportDialog({ onClose, onImport }: { onClose: () => void; onImport: (payload: string) => Promise<string | null> }) {
+  const [cameraOn, setCameraOn] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const processingRef = useRef(false);
+  const onImportRef = useRef(onImport);
+  onImportRef.current = onImport;
+
+  const consumePayload = async (payload: string) => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    setBusy(true); setError(''); setCameraOn(false);
+    try {
+      const reason = await onImportRef.current(payload);
+      if (reason) setError(reason);
+      else onClose();
+    } catch (reason) { setError(errorText(reason)); }
+    finally { setBusy(false); processingRef.current = false; }
+  };
+
+  const chooseQrImage = async () => {
+    const file = await pickFile('image/png,image/jpeg,image/webp');
+    if (!file) return;
+    if (file.size > 16 * 1024 * 1024) { setError('QR image exceeds the 16 MB input safety limit.'); return; }
+    setBusy(true); setError('');
+    let bitmap: ImageBitmap | null = null;
+    try {
+      bitmap = await createImageBitmap(file);
+      if (bitmap.width * bitmap.height > 40_000_000) throw new Error('Image dimensions exceed the QR scan safety limit.');
+      const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) throw new Error('Image decoder is unavailable.');
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+      const decoded = jsQR(pixels.data, pixels.width, pixels.height, { inversionAttempts: 'attemptBoth' });
+      if (!decoded) throw new Error('No readable QR code was found in that image.');
+      await consumePayload(decoded.data);
+    } catch (reason) { setError(errorText(reason)); }
+    finally { bitmap?.close(); setBusy(false); }
+  };
+
+  const startCamera = async () => {
+    setError('');
+    if (!navigator.mediaDevices?.getUserMedia) { setError('Camera scanning is not available in this browser context. Choose a QR image file instead.'); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+      const video = videoRef.current;
+      if (!video) { stream.getTracks().forEach((track) => track.stop()); throw new Error('Camera preview is unavailable.'); }
+      streamRef.current = stream;
+      video.srcObject = stream;
+      await video.play();
+      setCameraOn(true);
+    } catch (reason) { setError(`Camera could not start: ${errorText(reason)}. Choose a QR image file instead.`); }
+  };
+
+  useEffect(() => {
+    if (!cameraOn) return;
+    const video = videoRef.current;
+    const stream = streamRef.current;
+    if (!video || !stream) return;
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) { setError('Camera image decoder is unavailable.'); return; }
+    let frame = 0;
+    let lastDecode = 0;
+    let stopped = false;
+    const scan = (time: number) => {
+      if (stopped) return;
+      if (time - lastDecode > 160 && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0 && !processingRef.current) {
+        lastDecode = time;
+        const scale = Math.min(1, 640 / Math.max(video.videoWidth, video.videoHeight));
+        canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+        canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+        const decoded = jsQR(pixels.data, pixels.width, pixels.height, { inversionAttempts: 'attemptBoth' });
+        if (decoded) { void consumePayload(decoded.data); return; }
+      }
+      frame = requestAnimationFrame(scan);
+    };
+    frame = requestAnimationFrame(scan);
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(frame);
+      stream.getTracks().forEach((track) => track.stop());
+      if (video.srcObject === stream) video.srcObject = null;
+      if (streamRef.current === stream) streamRef.current = null;
+    };
+  }, [cameraOn]);
+
+  return (
+    <Modal title="Import a Carbon brush QR" width={560} onClose={onClose} footer={<Btn onClick={onClose} disabled={busy}>Close</Btn>}>
+      <div className="space-y-3">
+        <p className="text-xs text-neutral-400">Scan a QR with the camera after granting permission, or choose a QR image file. Decoding happens locally. Only Carbon brush data is accepted; URLs are never opened.</p>
+        <video ref={videoRef} autoPlay playsInline muted className={cameraOn ? 'mx-auto max-h-64 w-full rounded bg-black object-contain' : 'hidden'} aria-label="Local QR camera preview" />
+        <div className="flex flex-wrap gap-2"><Btn disabled={busy || cameraOn} variant="primary" onClick={() => void chooseQrImage()}><QrCode size={12} /> Choose QR image</Btn><Btn disabled={busy || cameraOn} onClick={() => void startCamera()}>Start camera…</Btn>{cameraOn && <Btn onClick={() => setCameraOn(false)}><X size={12} /> Stop camera</Btn>}</div>
+        {busy && <div className="text-xs text-neutral-400">Validating brush data…</div>}
+        {error && <div role="alert" className="rounded border border-red-500/30 bg-red-500/5 p-2 text-xs text-red-200">{error}</div>}
+        <div className="text-[10px] text-neutral-500">QR payloads are limited to {MAX_BRUSH_QR_BYTES} UTF-8 bytes. Packs containing stamp images or larger brush sets should use .carbonpack files. Camera and image data are not sent to a server.</div>
+      </div>
+    </Modal>
+  );
+}
+
+function LibItem({ b, grid, active, fav, modified, onQr }: { b: BrushParams; grid: boolean; active: boolean; fav: boolean; modified: boolean; onQr?: (brush: BrushParams) => void }) {
   const [edit, setEdit] = useState(false);
   const custom = !b.builtin;
   const st = getApp();
+  const customEraser = st.customErasers.some((brush) => brush.id === b.id);
   return (
     <div className={cn('group rounded-lg border p-2 text-[11px]', active ? 'border-[#E8913A]/60 bg-[#E8913A]/10' : 'border-white/10 hover:border-white/25', !grid && 'flex items-center gap-3')}>
       <div className={grid ? '' : 'w-40 shrink-0'} onClick={() => selectBrush(b.id)}><PackPreview b={b} /></div>
       <div className="min-w-0 flex-1">
         {edit && custom ? (
-          <input autoFocus defaultValue={b.name} onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={(e) => { setApp({ customBrushes: st.customBrushes.map((x) => (x.id === b.id ? { ...x, name: e.target.value || x.name } : x)) }); setEdit(false); }} className="w-full rounded bg-neutral-900 px-1 text-white outline-none ring-1 ring-[#E8913A]/50" />
+          <input autoFocus defaultValue={b.name} onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} onBlur={(e) => { setApp({ customBrushes: st.customBrushes.map((x) => (x.id === b.id ? { ...x, name: e.target.value || x.name } : x)), customErasers: st.customErasers.map((x) => (x.id === b.id ? { ...x, name: e.target.value || x.name } : x)) }); setEdit(false); }} className="w-full rounded bg-neutral-900 px-1 text-white outline-none ring-1 ring-[#E8913A]/50" />
         ) : <div className="truncate pt-1 text-neutral-200" title={b.description}>{b.name}</div>}
-        <div className="truncate text-[9px] uppercase tracking-wide text-neutral-500">{custom ? 'Custom' : b.category} · {b.mode} · engine v{b.version}{modified ? ' · modified' : ''}</div>
+        <div className="truncate text-[9px] uppercase tracking-wide text-neutral-500">{customEraser ? 'Custom Eraser' : custom ? 'Custom' : b.category} · {b.mode} · engine v{b.version}{modified ? ' · modified' : ''}</div>
+        <div className="text-[9px] text-neutral-600">{formatAssetSize(measureBrushDefinitionBytes(b))} JSON definition</div>
       </div>
       <div className="mt-1 flex gap-1">
         <button title="Use" onClick={() => selectBrush(b.id)} className="text-neutral-400 hover:text-white"><Brush size={12} /></button>
         <button title="Favorite" onClick={() => setApp({ favorites: fav ? st.favorites.filter((x) => x !== b.id) : [...st.favorites, b.id] })} className={fav ? 'text-[#E8913A]' : 'text-neutral-500 hover:text-white'}><Star size={12} fill={fav ? 'currentColor' : 'none'} /></button>
-        <button title="Duplicate as custom preset" onClick={() => { const nb = { ...brushById(b.id)!, id: uid('cb-'), name: b.name + ' Copy', builtin: false }; setApp({ customBrushes: [...st.customBrushes, nb] }); toast(`Created “${nb.name}”`, 'success'); }} className="text-neutral-500 hover:text-white"><Copy size={12} /></button>
+        {onQr && !customEraser && <button title="Create a local QR brush share" onClick={() => onQr(b)} className="text-neutral-500 hover:text-white"><QrCode size={12} /></button>}
+        <button title={customEraser ? 'Duplicate as custom eraser tip' : 'Duplicate as custom preset'} onClick={() => { const nb = { ...brushById(b.id)!, id: uid(customEraser ? 'ce-' : 'cb-'), name: b.name + ' Copy', builtin: false }; if (customEraser) setApp({ customErasers: [...st.customErasers, nb] }); else setApp({ customBrushes: [...st.customBrushes, nb] }); toast(`Created “${nb.name}”`, 'success'); }} className="text-neutral-500 hover:text-white"><Copy size={12} /></button>
         {custom && <button title="Rename" onClick={() => setEdit(true)} className="text-neutral-500 hover:text-white"><PaletteIcon size={12} /></button>}
         {modified && <button title="Reset to defaults" onClick={() => { const o = { ...st.overrides }; delete o[b.id]; setApp({ overrides: o }); }} className="text-neutral-500 hover:text-white"><RotateCcw size={12} /></button>}
-        {custom && <button title="Delete" onClick={() => setApp({ customBrushes: st.customBrushes.filter((x) => x.id !== b.id) })} className="text-neutral-500 hover:text-red-400"><Trash2 size={12} /></button>}
+        {custom && <button title={customEraser ? 'Delete custom eraser tip' : 'Delete custom brush'} onClick={async () => {
+          const answer = await confirmDialog(`Delete “${b.name}”?`, 'The custom preset will be removed from this device. Existing artwork strokes are not changed.', [
+            { label: 'Keep', value: 'n' }, { label: 'Delete', value: 'y', variant: 'danger' },
+          ]);
+          if (answer === 'y') setApp({ customBrushes: st.customBrushes.filter((x) => x.id !== b.id), customErasers: st.customErasers.filter((x) => x.id !== b.id), favorites: st.favorites.filter((x) => x !== b.id), recentBrushes: st.recentBrushes.filter((x) => x !== b.id), collections: st.collections.map((collection) => ({ ...collection, ids: collection.ids.filter((x) => x !== b.id) })), brushId: st.brushId === b.id ? 'pencil-hb' : st.brushId, eraserBrushId: st.eraserBrushId === b.id ? 'eraser-hard' : st.eraserBrushId });
+        }} className="text-neutral-500 hover:text-red-400"><Trash2 size={12} /></button>}
       </div>
     </div>
   );

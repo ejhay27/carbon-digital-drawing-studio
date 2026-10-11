@@ -1,4 +1,4 @@
-# Carbon: Prime 7.1.1+ls
+# Carbon: Prime 7.5.1+ls
 
 **Where all starts begin.**
 
@@ -10,17 +10,19 @@ runs as an offline-capable web app and has a separate Capacitor-based Android bu
 Projects and preferences stay on the user's device; the app does not require an account or a
 cloud service.
 
-- **Current Windows/desktop source candidate:** `7.1.1+ls` — not published.
+- **Current Windows/desktop source candidate:** `7.5.1+ls` — not published.
 - **Android identity:** `CARBON 1.0.0` — separately versioned and unchanged by this update.
 - **`+ls`:** the Carbon: Prime Local Storage release line; data is kept in local browser storage
   and project files, or through Android's local file adapter.
 - **Developer:** Ejhay Claus B. Predonio.
 
-The 7.1.0+ls feature increment introduced the finder, command palette, offline guide/sample
-and 3D surface symmetry. The 7.1.1+ls patch updates project documentation and version/release
-metadata only. No release has been published. Browser visuals, Windows installer/runtime and
-Android device acceptance remain separate verification tasks; see
-[`docs/AUDIT-7.1.0+ls.md`](docs/AUDIT-7.1.0+ls.md).
+The `7.5.1+ls` source candidate adds a local-first brush-asset foundation: offline bundled packs,
+validated pack storage/imports, compact QR brush sharing, and draft-based Brush Lab and Custom
+Eraser Studio. No remote marketplace catalog is configured, so online packs are not available.
+This is not a published release. QR scanning and UI flows have not had end-to-end browser or
+platform acceptance; the Windows installer and Android device paths also remain unverified.
+See [`docs/AUDIT-CURRENT-7.1.1+ls.md`](docs/AUDIT-CURRENT-7.1.1+ls.md) for the baseline and
+current implementation/verification boundaries.
 
 ## Features
 
@@ -34,6 +36,13 @@ Android device acceptance remain separate verification tasks; see
   and recent files; navigate with the keyboard.
 - **Offline Quick Start:** an optional, dismissible guide with a multi-layer editable sample.
   The sample opens as a new unsaved document and does not replace existing work.
+- **Brush Marketplace and asset storage (Windows/desktop):** offline bundled packs, size/storage
+  reporting, validated `.carbonpack` import/export and safe local removal. No remote catalog is
+  configured in this repository; the UI does not pretend online packs exist.
+- **Brush Lab and Custom Erasers:** isolated draft editing through the real brush preview and
+  separate local custom brush/eraser presets.
+- **QR brush sharing:** bounded payloads, QR PNG/text sharing, local image-file decoding and an
+  explicit camera flow; arbitrary URLs are rejected. End-to-end scanner acceptance is pending.
 - **3D Studio (Windows/desktop):** White Ground, perspective grid, camera navigation,
   editable spatial strokes and mirror/radial surface symmetry projected onto real mesh surfaces.
 - **Comics Studio (Windows/desktop):** pages, panels, balloons, lettering and export tools.

@@ -26,6 +26,37 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: '7.5.1',
+    suffix: '+ls',
+    title: 'Brush assets and local creation tools',
+    date: null,
+    category: 'feature',
+    summary: 'Local source candidate adding a real bundled brush marketplace/storage foundation, bounded Carbon QR brush sharing, and draft-based custom brush and eraser creation. It is not published; browser UI and platform acceptance are still outstanding.',
+    features: [
+      'Brush Marketplace keeps its bundled catalog available offline and reports when no optional remote catalog is configured; it does not invent online downloads, ratings or popularity.',
+      'Brush Lab and Custom Eraser Studio edit an isolated draft through the real brush engine preview, then save custom brush presets and eraser tips separately in local app state.',
+      'Brush QR sharing generates a compact PNG or text payload for a validated single brush; image-file decode and explicit camera-scan flows are available in the UI. Arbitrary URLs are rejected and larger/stamped brushes use .carbonpack files.',
+    ],
+    improvements: [
+      'Validated brush pack bytes and metadata use a shared local asset store with download/install limits, storage estimates and separate input versus installed-size reporting.',
+      'Brush pack import/export and QR parsing enforce size/format/metadata guards; custom stamp-image imports have a 300 KB cap and must decode before saving.',
+      'Custom eraser presets are part of the persisted local brush model, can be selected only while Eraser is active, and are included in confirmed removal and export workflows.',
+    ],
+    fixes: [
+      'Custom preset removal now asks for confirmation and cleans up active references, favorites, recent lists and collection memberships without modifying existing artwork.',
+      'Legacy malformed or missing pack data is handled without silently discarding legacy brush definitions.',
+    ],
+    compatibility: [
+      'No .carbon archive or manifest format change; existing artwork and document files are not rewritten by brush-asset operations.',
+      'Carbon: Prime stays on the 7.x+ls line; Android retains its separate CARBON 1.0.0 identity.',
+      'No account, cloud sync, telemetry, AI drawing or animation timeline is added. Remote marketplace hosting is optional and is not configured in this repository.',
+    ],
+    knownIssues: [
+      'This source candidate has code-level tests only. QR camera decoding, custom brush save/use flows and the UI have not received end-to-end browser or platform acceptance.',
+      'Custom brush and eraser definitions remain in local app preferences; the unified asset manager and project illustration browser are still future work.',
+    ],
+  },
+  {
     version: '7.1.1',
     suffix: '+ls',
     title: 'Project overview and attribution',
