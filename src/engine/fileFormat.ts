@@ -11,7 +11,7 @@ import type { ComicObject, LayerLink } from './types';
 import { uid } from './util';
 import type { ComicPageMeta } from './comic';
 import { DEFAULT_ADJUST } from './render';
-import { APP_LABEL } from '../version'; // "CARBON 2.1.0" on Windows; Android keeps its legacy label
+import { APP_LABEL } from '../version'; // "CARBON PRIME 7.1.1+ls" on Windows; Android keeps its legacy label
 
 const BLENDS = ['lighter', 'linear-burn', 'source-over', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'];
 
@@ -135,6 +135,16 @@ function readManifest(files: Record<string, Uint8Array>): Manifest {
   for (const L of m.layers) {
     if (L.type === 'raster' && (!L.file || !files[L.file])) throw new Error(`Layer "${L.name}" pixel data is missing.`);
     if (L.type === 'ink' && !Array.isArray(L.strokes)) throw new Error(`Crisp Ink layer "${L.name}" is corrupt.`);
+    if (L.mask !== undefined && (!L.mask || !files[L.mask])) throw new Error(`Layer mask data for "${L.name}" is missing.`);
+  }
+  if (m.assets !== undefined && !Array.isArray(m.assets)) throw new Error('Project asset list is corrupt.');
+  for (const asset of m.assets || []) {
+    if (!asset || typeof asset.id !== 'string' || !asset.id || typeof asset.file !== 'string' || !asset.file || !files[asset.file]) {
+      throw new Error(`Project asset data is missing${asset?.id ? ` for "${asset.id}"` : ''}.`);
+    }
+  }
+  if (m.replay && (typeof m.replay.file !== 'string' || !m.replay.file || !files[m.replay.file])) {
+    throw new Error('Replay data missing from archive.');
   }
   return m;
 }
@@ -143,9 +153,7 @@ function readManifest(files: Record<string, Uint8Array>): Manifest {
 export function verifyBytes(bytes: Uint8Array) {
   let files: Record<string, Uint8Array>;
   try { files = unzipSync(bytes); } catch { throw new Error('Archive could not be read.'); }
-  const m = readManifest(files);
-  if (m.replay && !files[m.replay.file]) throw new Error('Replay data missing from archive.');
-  return m;
+  return readManifest(files);
 }
 
 function inkValid(s: InkStroke): InkStroke {
@@ -159,6 +167,9 @@ async function readLayers(files: Record<string, Uint8Array>, list: Manifest['lay
   const out: Layer[] = [];
   for (const L of list) {
     const type = (['ink', 'group', 'adjust', 'comic'].includes(L.type) ? L.type : 'raster') as Layer['type'];
+    if (type === 'raster' && (!L.file || !files[L.file])) throw new Error(`Layer "${L.name}" pixel data is missing.`);
+    if (L.mask !== undefined && (!L.mask || !files[L.mask])) throw new Error(`Layer mask data for "${L.name}" is missing.`);
+    if (type === 'ink' && !Array.isArray(L.strokes)) throw new Error(`Crisp Ink layer "${L.name}" is corrupt.`);
     const base = {
       id: String(L.id), name: String(L.name || 'Layer'), type,
       visible: L.visible !== false, locked: !!L.locked, opacity: Math.max(0, Math.min(1, Number(L.opacity ?? 1))),
@@ -176,7 +187,7 @@ async function readLayers(files: Record<string, Uint8Array>, list: Manifest['lay
     if (type === 'raster') base.canvas = await decodePng(files[L.file!], w, h, `layer "${base.name}"`);
     else if (type === 'ink') base.strokes = (L.strokes || []).map(inkValid);
     else if (type === 'comic') base.comic = Array.isArray(L.comic) ? L.comic : [];
-    if (L.mask && files[L.mask]) {
+    if (L.mask) {
       base.mask = await decodePng(files[L.mask], w, h, `mask of "${base.name}"`);
       base.maskEnabled = L.maskEnabled !== false;
     }

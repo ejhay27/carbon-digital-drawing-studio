@@ -8,7 +8,6 @@ import { updateDock, useDock } from '../win/dockModel';
 import { WIN_PANELS } from '../state/store';
 import { addLayer, fitView, prettyCombo, rotateView, runAction } from '../state/commands';
 import { duplicateCurrent, exportBrushList, importBrushPack } from './Brushes';
-import { CarbonMark } from './Brand';
 import { uid } from '../engine/util';
 import { cn } from '../utils/cn';
 
@@ -168,6 +167,8 @@ export default function MenuBar() {
       { label: 'Record New Documents by Default', checked: s.settings.recordByDefault, action: () => updateSettings({ recordByDefault: !s.settings.recordByDefault }) },
     ],
     Help: [
+      { label: 'Command Palette…', action: () => setApp({ dialog: 'commandPalette' }), sc: sc('app.commandPalette') },
+      { label: 'Offline Quick Start…', action: () => setApp({ dialog: 'quickStart' }) },
       { label: 'Keyboard Shortcuts', action: () => setApp({ dialog: 'shortcuts' }) },
       ...(EDITION.windows ? [{ label: "Latest Patches / What's New", action: () => setApp({ dialog: 'patches' }) }] : []),
       { label: 'Run Diagnostics (acceptance tests)', action: () => setApp({ dialog: 'diagnostics' }) },

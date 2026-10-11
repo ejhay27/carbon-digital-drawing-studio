@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
+import { CheckCircle2, FolderOpen, Loader2, XCircle } from 'lucide-react';
 import { activeDoc, ALL_TOOLS, DEFAULT_SHORTCUTS, getApp, SHORTCUT_LABELS, setApp, toast, updateSettings, useApp } from '../state/store';
 import { configureDoc, exportImage, newDocument } from '../state/actions';
 import { comboFromEvent, prettyCombo } from '../state/commands';
@@ -14,6 +14,9 @@ import { APP_LABEL, APP_VERSION } from '../version';
 import { ColorDockSettings } from '../win/ColorDock';
 import { PatchesDialog } from '../win/Patches';
 import { BrushFusionDialog } from '../win/BrushFusion';
+import { ABOUT_CREATOR, ABOUT_PROJECT_COPY } from './aboutCopy';
+import CommandPalette from './CommandPalette';
+import QuickStartDialog from './QuickStartDialog';
 
 const close = () => setApp({ dialog: null }); // closes any open dialog
 
@@ -163,7 +166,7 @@ function SettingsDialog({ initialTab = 'interface' }: { initialTab?: string }) {
     <Modal title="Preferences" onClose={close} width={620}>
       <div className="flex gap-4">
         <div className="flex w-32 shrink-0 flex-col gap-1">
-          {[['interface', 'Interface'], ['input', 'Input & Gestures'], ['replay', 'Replay & Storage'], ...(isNative() ? [['android', 'Android']] : []), ...(EDITION.windows ? [['workspace', 'Canvas & Workspace']] : []), ['rail', 'Tool Rail'], ['shortcuts', 'Shortcuts']].map(([k, l]) => <Btn key={k} active={tab === k} onClick={() => setTab(k)} className="justify-start">{l}</Btn>)}
+          {[['interface', 'Interface'], ...(EDITION.windows ? [['home', 'Home scene']] : []), ['input', 'Input & Gestures'], ['replay', 'Replay & Storage'], ...(isNative() ? [['android', 'Android']] : []), ...(EDITION.windows ? [['workspace', 'Canvas & Workspace']] : []), ['rail', 'Tool Rail'], ['shortcuts', 'Shortcuts']].map(([k, l]) => <Btn key={k} active={tab === k} onClick={() => setTab(k)} className="justify-start">{l}</Btn>)}
         </div>
         <div className="min-w-0 flex-1 space-y-1">
           {tab === 'interface' && <>
@@ -174,6 +177,11 @@ function SettingsDialog({ initialTab = 'interface' }: { initialTab?: string }) {
             <Toggle label="Restore previous session on launch" checked={s.restoreSession} onChange={(v) => apply({ restoreSession: v })} />
             <Slider label="Autosave every" value={s.autosaveSec} min={10} max={300} step={5} fmt={(v) => v + 's'} onChange={(v) => apply({ autosaveSec: v })} />
             <Slider label="Undo steps" value={s.undoLimit} min={10} max={200} step={5} fmt={(v) => String(v)} onChange={(v) => apply({ undoLimit: v })} />
+          </>}
+          {tab === 'home' && EDITION.windows && <>
+            <Toggle label="Show the Philippine coast scene on the home screen" checked={s.homeSceneEnabled} onChange={(v) => apply({ homeSceneEnabled: v })} />
+            <Toggle label="Animate waves and subtle camera drift" checked={s.homeSceneMotion} onChange={(v) => apply({ homeSceneMotion: v })} />
+            <p className="pt-2 text-[11px] leading-relaxed text-neutral-500">The coastal image is packaged locally and works offline. Disabling animation keeps a still frame; system reduced-motion preferences also disable movement. Turning the scene off leaves the home layout and actions in place.</p>
           </>}
           {tab === 'input' && <>
             <Toggle label="Stylus-only drawing (fingers pan / zoom)" checked={s.stylusOnly} onChange={(v) => apply({ stylusOnly: v })} />
@@ -272,7 +280,7 @@ thumbnail.png            preview`}</pre>
         <p><b>Safe save:</b> the archive is fully serialised and verified before anything is written. Where the File System Access API is available, writes go to a swap file that replaces the original only when it closes successfully. Otherwise a new file is downloaded. A local backup copy is also kept. Autosave writes every open document to IndexedDB for crash recovery.</p>
         <SectionTitle>Platform note</SectionTitle>
         <p><b>Android:</b> the same build ships as an APK in a Capacitor 8 shell (see docs/ANDROID.md). It saves projects natively to Documents/CARBON, exports through the share sheet, handles the back button, autosaves in the background and has automatic palm rejection. {isNative() ? 'You are running the Android edition.' : ''}</p>
-        <p>This build of CARBON 1.0 is a web application. It runs offline in desktop browsers on Windows and on Android tablets (Chrome), and no account is required. The engine sits behind platform adapters (file access, input, storage), which leaves room for future native packaging.</p>
+        <p>{APP_LABEL} is a local-first application. It runs offline in desktop browsers on Windows and on Android tablets (Chrome), and no account is required. The engine sits behind platform adapters (file access, input, storage), which leaves room for future native packaging.</p>
       </div>
     </Modal>
   );
@@ -298,7 +306,7 @@ function Space() {
 
 function About() {
   return (
-    <Modal title="About CARBON" onClose={close} width={460}>
+    <Modal title="About Carbon: Prime" onClose={close} width={460}>
       <div className="flex flex-col items-center gap-4 py-2 text-center">
         <CarbonLockup />
         <div className="flex items-end gap-4 text-neutral-500">
@@ -307,7 +315,7 @@ function About() {
           <CarbonMark size={36} mono className="text-neutral-300" />
           <CarbonMark size={18} />
         </div>
-        <p className="text-xs text-neutral-400">{APP_LABEL} · {EDITION.windows ? 'Windows edition · drawing, illustration, comic & 3D studio' : 'Professional 2D drawing & illustration studio'}</p>
+        <p className="text-xs text-neutral-400">{APP_LABEL} · {EDITION.windows ? 'Windows edition · drawing, painting, comic, 3D & illustration studio' : 'Professional 2D drawing & illustration studio'}</p>
         {EDITION.windows && (
           <div className="flex gap-2">
             <span className="rounded bg-white/5 px-2 py-0.5 font-mono text-[10px] text-neutral-400">version {APP_VERSION}</span>
@@ -315,7 +323,27 @@ function About() {
           </div>
         )}
         <p className="text-[11px] leading-relaxed text-neutral-500">Works fully offline. Your artwork, recordings and settings stay on this device. There is no telemetry, no account and no cloud dependency.</p>
+        <div className="flex items-center justify-center gap-2">
+          <p className="text-[11px] text-neutral-400">{ABOUT_CREATOR}</p>
+          <button
+            type="button"
+            onClick={() => setApp({ dialog: 'projectInfo' })}
+            className="rounded-md p-1.5 text-neutral-400 transition hover:bg-white/10 hover:text-white"
+            title="Open About / Project Information"
+            aria-label="Open About / Project Information"
+          >
+            <FolderOpen size={15} />
+          </button>
+        </div>
       </div>
+    </Modal>
+  );
+}
+
+function ProjectInformation() {
+  return (
+    <Modal title="About / Project Information" onClose={close} width={640}>
+      <p className="whitespace-pre-wrap text-left text-[13px] leading-relaxed text-neutral-200">{ABOUT_PROJECT_COPY}</p>
     </Modal>
   );
 }
@@ -328,7 +356,10 @@ export default function Dialogs() {
     case 'canvasSize': return <SizeDialog mode="canvas" />;
     case 'imageSize': return <SizeDialog mode="image" />;
     case 'settings': return <SettingsDialog />;
+    case 'settingsHome': return EDITION.windows ? <SettingsDialog initialTab="home" /> : <SettingsDialog />;
     case 'shortcuts': return <SettingsDialog initialTab="shortcuts" />;
+    case 'commandPalette': return <CommandPalette />;
+    case 'quickStart': return <QuickStartDialog />;
     case 'colorDock': return EDITION.windows ? <SettingsDialog initialTab="workspace" /> : null;
     case 'patches': return EDITION.windows ? <PatchesDialog /> : null;
     case 'fusion': return EDITION.windows ? <BrushFusionDialog /> : null;
@@ -336,6 +367,7 @@ export default function Dialogs() {
     case 'docs': return <Docs />;
     case 'space': return <Space />;
     case 'about': return <About />;
+    case 'projectInfo': return <ProjectInformation />;
     default: return null;
   }
 }

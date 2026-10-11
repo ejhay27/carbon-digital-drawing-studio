@@ -7,6 +7,7 @@ import { buildPresets } from '../engine/brushes';
 import { extraBrushes } from '../engine/brushPacks';
 import { EDITION } from '../platform/edition';
 import { uid } from '../engine/util';
+import type { ProjectSort } from './projectFinder';
 
 export type PanelId = 'layers' | 'brushes' | 'brushStudio' | 'color' | 'history' | 'replay' | 'navigator' | 'toolOptions' | 'reference' | 'docInfo' | 'continuum' | 'timemachine' | 'palmem';
 /** Panels that exist only in the Windows edition (never added to the Android layout). */
@@ -44,6 +45,8 @@ export interface PaletteCfg {
 export interface Settings {
   uiScale: number;
   uiMode: 'auto' | 'desktop' | 'tablet';
+  homeSceneEnabled: boolean;
+  homeSceneMotion: boolean;
   restoreSession: boolean;
   autosaveSec: number;
   recordByDefault: boolean;
@@ -65,6 +68,9 @@ export interface Settings {
   palmAuto: boolean; // once a stylus is used, finger touches pan instead of drawing
   shareExports: boolean; // Android: open the share sheet after exporting
   immersive: boolean; // Android: hide system bars in canvas-only mode
+  pinnedProjects: string[]; // local Home/Welcome project finder pins; keys distinguish recents from device files
+  homeProjectSort: ProjectSort;
+  quickStartSeen: boolean; // dismissible, offline first-run guide
 }
 
 export interface ToolOpts {
@@ -115,6 +121,7 @@ export const DEFAULT_SHORTCUTS: Record<string, string> = {
   'brush.smaller': '[', 'brush.larger': ']', 'color.swap': 's', 'color.reset': 'd',
   'select.all': 'ctrl+a', 'select.none': 'ctrl+d', 'select.invert': 'ctrl+shift+i', 'edit.clear': 'delete',
   'layer.new': 'ctrl+shift+n', 'layer.newInk': 'ctrl+shift+k', 'replay.toggle': 'ctrl+shift+p',
+  'app.commandPalette': 'ctrl+k',
 };
 
 export const SHORTCUT_LABELS: Record<string, string> = {
@@ -123,7 +130,7 @@ export const SHORTCUT_LABELS: Record<string, string> = {
   'view.zoomOut': 'Zoom out', 'view.canvasOnly': 'Canvas-only mode', 'view.resetRotation': 'Reset rotation', 'brush.smaller': 'Brush smaller',
   'brush.larger': 'Brush larger', 'color.swap': 'Swap colors', 'color.reset': 'Reset colors', 'select.all': 'Select all', 'select.none': 'Deselect',
   'select.invert': 'Invert selection', 'edit.clear': 'Clear / delete', 'layer.new': 'New layer', 'layer.newInk': 'New Crisp Ink layer',
-  'replay.toggle': 'Open Drawing Replay',
+  'replay.toggle': 'Open Drawing Replay', 'app.commandPalette': 'Open command palette',
   ...Object.fromEntries(ALL_TOOLS.map((t) => ['tool.' + t.id, t.label + ' tool'])),
 };
 
@@ -143,16 +150,33 @@ export const DEFAULT_PALETTE: PaletteCfg = {
   items: ['color', 'brush', 'eraser', 'picker', 'fill', 'select', 'transform', 'undo', 'redo'],
 };
 
-const DEFAULT_SETTINGS: Settings = {
-  uiScale: 1, uiMode: 'auto', restoreSession: true, autosaveSec: 30, recordByDefault: true, replayLimitMB: 250, idleCapSec: 2.5,
+export const DEFAULT_SETTINGS: Settings = {
+  uiScale: 1, uiMode: 'auto', homeSceneEnabled: true, homeSceneMotion: true, restoreSession: true, autosaveSec: 30, recordByDefault: true, replayLimitMB: 250, idleCapSec: 2.5,
   undoLimit: 80, stylusOnly: false, twoFingerTap: 'undo', threeFingerTap: 'redo', shortcuts: { ...DEFAULT_SHORTCUTS },
   railTools: ALL_TOOLS.map((t) => t.id), gridSize: 64, showGrid: false, showRulers: false, showGuides: true, perspective: false,
   brushOutline: true, mousePressure: false, palmAuto: true, shareExports: true, immersive: true,
+  pinnedProjects: [], homeProjectSort: 'recent', quickStartSeen: false,
 };
+
+/** Backfill new preference fields without replacing any settings from an existing install. */
+export function mergeSettings(persisted: Partial<Settings> = {}): Settings {
+  const pins = Array.isArray(persisted.pinnedProjects)
+    ? [...new Set(persisted.pinnedProjects.filter((x): x is string => typeof x === 'string'))].slice(0, 200)
+    : DEFAULT_SETTINGS.pinnedProjects;
+  const sort: ProjectSort = persisted.homeProjectSort === 'name' || persisted.homeProjectSort === 'size' ? persisted.homeProjectSort : 'recent';
+  return {
+    ...DEFAULT_SETTINGS,
+    ...persisted,
+    pinnedProjects: pins,
+    homeProjectSort: sort,
+    quickStartSeen: typeof persisted.quickStartSeen === 'boolean' ? persisted.quickStartSeen : DEFAULT_SETTINGS.quickStartSeen,
+    shortcuts: { ...DEFAULT_SHORTCUTS, ...(persisted.shortcuts || {}) },
+  };
+}
 
 export interface Toast { id: string; msg: string; kind: 'info' | 'error' | 'success' }
 export interface ConfirmReq { title: string; message: string; actions: { label: string; value: string; variant?: 'primary' | 'danger' }[]; resolve: (v: string) => void; input?: string }
-export type DialogType = 'new' | 'settings' | 'export' | 'canvasSize' | 'imageSize' | 'about' | 'shortcuts' | 'diagnostics' | 'space' | 'docs' | 'paletteEdit' | 'colorDock' | 'patches' | 'fusion' | null;
+export type DialogType = 'new' | 'settings' | 'export' | 'canvasSize' | 'imageSize' | 'about' | 'projectInfo' | 'shortcuts' | 'diagnostics' | 'space' | 'docs' | 'paletteEdit' | 'colorDock' | 'patches' | 'fusion' | 'commandPalette' | 'quickStart' | 'settingsHome' | null;
 
 export interface AppState {
   docs: DocEngine[];
@@ -252,7 +276,7 @@ export const useApp = create<AppState>()(
         return {
           ...current,
           ...p,
-          settings: { ...DEFAULT_SETTINGS, ...(p.settings || {}), shortcuts: { ...DEFAULT_SHORTCUTS, ...(p.settings?.shortcuts || {}) } },
+          settings: mergeSettings(p.settings),
           layout: { ...DEFAULT_LAYOUT, ...(p.layout || {}) },
           palette: { ...DEFAULT_PALETTE, ...(p.palette || {}) },
           toolOpts: { ...current.toolOpts, ...(p.toolOpts || {}) },

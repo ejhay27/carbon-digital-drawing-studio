@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
-import { Brush, Camera, Copy, Download, Eye, EyeOff, Image as ImageIcon, MousePointer2, PenLine, Redo2, Slash, Spline, Trash2, Undo2 } from 'lucide-react';
+import { Brush, Camera, Copy, Download, Eye, EyeOff, Image as ImageIcon, MousePointer2, Orbit, PenLine, Redo2, Slash, Spline, Trash2, Undo2 } from 'lucide-react';
 import type { CamView } from '../engine/types';
 import { activeDoc, confirmDialog, getApp, promptDialog, toast, useApp } from '../state/store';
 import { compositeDoc } from '../engine/render';
@@ -12,17 +12,20 @@ import { pickFile } from '../state/actions';
 import { Btn, Select, Slider, Toggle } from '../components/ui';
 import { cn } from '../utils/cn';
 import {
-  applyMat, attachHierarchy, buildLights, buildObjects, curveGeometry, DEFAULT_VIEW, MAT_PRESETS, orthoHalfHeight, paintCanvases, paintCanvasFor, round3,
-  sceneOf, simplify3, smooth3, symMatrices, texBus, useNav, webglAvailable, type Geo, type Kind, type Obj, type PlaneMode, type Scene3D, type V3,
+  applyMat, attachHierarchy, buildEnvironment, buildLights, buildObjects, curveGeometry, DEFAULT_VIEW, localizeSurfaceNormal, localizeSurfaceStroke, makeGrid, MAT_PRESETS, orthoHalfHeight, paintCanvases, paintCanvasFor, persistSceneCamera, projectSurfaceSymmetryPaths, remapSurfaceNormals, round3,
+  sceneOf, simplify3, smooth3, surfaceHit, symMatrices, texBus, useNav, webglAvailable, type Geo, type Kind, type Obj, type PlaneMode, type Scene3D, type V3,
 } from './sceneRender';
+import { createTouchGestureGate } from './touchGestureGate';
 import { captureToLayer, finishPanelEdit } from './Continuum';
 
-type Tool3 = 'select' | 'draw' | 'bezier' | 'line' | 'paint';
+type Tool3 = 'camera' | 'select' | 'draw' | 'bezier' | 'line' | 'paint';
+/** Tools in which a pointer drag navigates instead of drawing. */
+const isNavTool = (t: Tool3) => t === 'camera' || t === 'select';
 type Target = 'plane' | 'surface';
 interface Rig {
   renderer: THREE.WebGLRenderer; scene: THREE.Scene; persp: THREE.PerspectiveCamera; ortho: THREE.OrthographicCamera; orbit: OrbitControls; tc: TransformControls;
-  content: THREE.Group; lights: THREE.Group; preview: THREE.Group; planeViz: THREE.Group; grid: THREE.GridHelper; axes: THREE.AxesHelper; ambient: THREE.AmbientLight;
-  meshes: Map<string, THREE.Object3D>; handles: THREE.Mesh[];
+  content: THREE.Group; lights: THREE.Group; preview: THREE.Group; planeViz: THREE.Group; env: THREE.Group; grid: THREE.GridHelper | null; axes: THREE.AxesHelper; ambient: THREE.AmbientLight;
+  meshes: Map<string, THREE.Object3D>; handles: THREE.Mesh[]; flushPanPersist: (() => void) | null;
 }
 const rnd = (v: number) => Math.round(v * 1000) / 1000; // stored coordinates are rounded to 1/1000 unit
 const objMatrix = (o: Obj) => new THREE.Matrix4().compose(new THREE.Vector3(...o.pos), new THREE.Quaternion().setFromEuler(new THREE.Euler(...o.rot)), new THREE.Vector3(...o.scale));
@@ -58,6 +61,7 @@ export default function Studio3D() {
   const [transparentRender, setTransparentRender] = useState(true);
   const [busy, setBusy] = useState(false);
   const [webgl] = useState(webglAvailable);
+  const [touchDevice] = useState(() => typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches);
   const [, force] = useState(0);
   const hist = useRef<{ undo: string[]; redo: string[] }>({ undo: [], redo: [] });
   const R = useRef<Rig | null>(null);
@@ -73,38 +77,51 @@ export default function Studio3D() {
     sceneRef.current = next;
     setSceneState(next);
     const d = activeDoc();
-    if (d) { d.scene3d = next; if (record) { d.dirty = true; d.meta.modified = Date.now(); } d.emit(); }
+    if (d) { d.scene3d = next; d.dirty = true; d.meta.modified = Date.now(); d.emit(); }
   };
   const update = (fn: (s: Scene3D) => Scene3D | void, record = true) => { const c = structuredClone(sceneRef.current); const r = fn(c); commit(r || c, record); };
-  const undo = () => { const u = hist.current.undo.pop(); if (!u) return toast('Nothing to undo in 3D'); hist.current.redo.push(JSON.stringify(sceneRef.current)); commit(JSON.parse(u), false); setSelPt(null); markDirty(); };
-  const redo = () => { const r = hist.current.redo.pop(); if (!r) return toast('Nothing to redo in 3D'); hist.current.undo.push(JSON.stringify(sceneRef.current)); commit(JSON.parse(r), false); markDirty(); };
-  const markDirty = () => { const d = activeDoc(); if (d) { d.dirty = true; d.emit(); } };
+  const undo = () => { const u = hist.current.undo.pop(); if (!u) return toast('Nothing to undo in 3D'); hist.current.redo.push(JSON.stringify(sceneRef.current)); commit(JSON.parse(u), false); setSelPt(null); };
+  const redo = () => { const r = hist.current.redo.pop(); if (!r) return toast('Nothing to redo in 3D'); hist.current.undo.push(JSON.stringify(sceneRef.current)); commit(JSON.parse(r), false); };
   const objOf = (s: Scene3D, id: string | null) => s.objects.find((o) => o.id === id);
 
-  useEffect(() => { const s = sceneOf(doc?.scene3d); sceneRef.current = s; setSceneState(s); setSel(null); setSelPt(null); hist.current = { undo: [], redo: [] }; if (R.current) applyView(s.camera || DEFAULT_VIEW); }, [doc?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const s = sceneOf(doc?.scene3d);
+    sceneRef.current = s;
+    setSceneState(s);
+    setSel(null);
+    setSelPt(null);
+    hist.current = { undo: [], redo: [] };
+    if (R.current) applyView({ ...(s.camera || DEFAULT_VIEW), ortho: s.ortho });
+  }, [doc?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const cam = () => (sceneRef.current.ortho ? R.current!.ortho : R.current!.persp);
-  const getView = (): CamView => {
-    const r = R.current!, c = cam(), t = r.orbit.target;
-    return { pos: [rnd(c.position.x), rnd(c.position.y), rnd(c.position.z)], target: [rnd(t.x), rnd(t.y), rnd(t.z)], ortho: sceneRef.current.ortho, zoom: sceneRef.current.ortho ? rnd(r.ortho.zoom) : 1, fov: r.persp.fov };
+  const getViewFor = (ortho: boolean): CamView => {
+    const r = R.current!, c = ortho ? r.ortho : r.persp, t = r.orbit.target;
+    return { pos: [rnd(c.position.x), rnd(c.position.y), rnd(c.position.z)], target: [rnd(t.x), rnd(t.y), rnd(t.z)], ortho, zoom: ortho ? rnd(r.ortho.zoom) : 1, fov: r.persp.fov };
   };
+  const getView = (): CamView => getViewFor(sceneRef.current.ortho);
   const fitOrtho = (r: Rig, v: CamView) => { const h = orthoHalfHeight(v), a = r.persp.aspect; r.ortho.left = -h * a; r.ortho.right = h * a; r.ortho.top = h; r.ortho.bottom = -h; r.ortho.zoom = v.zoom || 1; r.ortho.updateProjectionMatrix(); };
-  function applyView(v: CamView) {
+  function applyView(v: CamView, persist = false) {
     const r = R.current;
     if (!r) return;
+    r.flushPanPersist?.();
     r.orbit.target.set(...v.target);
     r.persp.position.set(...v.pos); r.persp.fov = v.fov || 45; r.persp.updateProjectionMatrix();
     r.ortho.position.set(...v.pos);
     if (v.ortho) fitOrtho(r, v);
-    if (v.ortho !== sceneRef.current.ortho) update((s) => { s.ortho = v.ortho; }, false);
+    if (persist || v.ortho !== sceneRef.current.ortho) {
+      update((s) => { s.ortho = v.ortho; if (persist) s.camera = { ...v, pos: [...v.pos] as V3, target: [...v.target] as V3 }; }, false);
+    }
     r.orbit.update();
   }
   const setOrtho = (on: boolean) => {
     const r = R.current;
     if (!r) return;
+    r.flushPanPersist?.();
     if (on) { r.ortho.position.copy(r.persp.position); fitOrtho(r, { ...getView(), ortho: true, zoom: 1 }); }
     else r.persp.position.copy(r.ortho.position);
-    update((s) => { s.ortho = on; }, false);
+    const view = getViewFor(on);
+    update((s) => { s.ortho = on; s.camera = view; }, false);
   };
 
   // ---------------- three.js rig (once)
@@ -128,7 +145,8 @@ export default function Studio3D() {
     orbit.dampingFactor = 0.12;
     const tc = new TransformControls(persp, renderer.domElement);
     sc.add(tc.getHelper());
-    const grid = new THREE.GridHelper(20, 80, 0x55555f, 0x36363b);
+    const env = new THREE.Group(); // White Ground environment (ground plane + optional shadow catcher)
+    let grid: THREE.GridHelper | null = makeGrid(sceneRef.current);
     const axes = new THREE.AxesHelper(1.5);
     const content = new THREE.Group(), lights = new THREE.Group(), preview = new THREE.Group(), planeViz = new THREE.Group();
     const ambient = new THREE.AmbientLight(0xffffff, 0.5);
@@ -137,13 +155,18 @@ export default function Studio3D() {
     (pg.material as THREE.Material).transparent = true; (pg.material as THREE.Material).opacity = 0.55; (pg.material as THREE.Material).depthWrite = false;
     const sheet = new THREE.Mesh(new THREE.PlaneGeometry(4, 4).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xe8913a, transparent: true, opacity: 0.07, side: THREE.DoubleSide, depthWrite: false }));
     planeViz.add(pg, sheet);
-    sc.add(grid, axes, content, lights, ambient, preview, planeViz);
-    const r: Rig = { renderer, scene: sc, persp, ortho, orbit, tc, content, lights, preview, planeViz, grid, axes, ambient, meshes: new Map(), handles: [] };
+    sc.add(env, grid, axes, content, lights, ambient, preview, planeViz);
+    const r: Rig = { renderer, scene: sc, persp, ortho, orbit, tc, content, lights, preview, planeViz, env, grid, axes, ambient, meshes: new Map(), handles: [], flushPanPersist: null };
     R.current = r;
-    applyView(sceneRef.current.camera || DEFAULT_VIEW);
+    applyView({ ...(sceneRef.current.camera || DEFAULT_VIEW), ortho: sceneRef.current.ortho });
     tc.addEventListener('dragging-changed', (e) => { const v = (e as unknown as { value: boolean }).value; orbit.enabled = !v; if (!v) syncFromTC(); });
     tc.addEventListener('objectChange', liveHandle);
-    orbit.addEventListener('end', () => { const s = sceneRef.current; s.camera = getView(); const d = activeDoc(); if (d && d.scene3d === s) (d.scene3d as Scene3D).camera = s.camera; });
+    orbit.addEventListener('start', () => R.current?.flushPanPersist?.());
+    orbit.addEventListener('end', () => {
+      R.current?.flushPanPersist?.();
+      const d = activeDoc();
+      if (d) persistSceneCamera(d, sceneRef.current, getView());
+    });
     const ro = new ResizeObserver(() => {
       const w = el.clientWidth, h = el.clientHeight;
       renderer.setSize(w, h);
@@ -224,7 +247,16 @@ export default function Studio3D() {
     if (!r) return;
     const s = scene;
     r.scene.background = new THREE.Color(s.bg);
-    r.grid.visible = s.grid; r.axes.visible = s.axes; r.ambient.intensity = s.ambient;
+    r.axes.visible = s.axes; r.ambient.intensity = s.ambient;
+    // White Ground environment: a real flat ground plane + subtle shadow catcher, rebuilt from scene data
+    disposeTree(r.env);
+    r.env.clear();
+    if (s.ground !== false) r.env.add(buildEnvironment(s));
+    r.env.visible = s.ground !== false;
+    if (r.grid) { r.scene.remove(r.grid); r.grid.dispose(); }
+    r.grid = makeGrid(s); // perspective grid: spacing follows the scene's grid size, colors adapt to the surface
+    r.grid.visible = s.grid;
+    r.scene.add(r.grid);
     const c = s.ortho ? r.ortho : r.persp;
     r.orbit.object = c;
     r.tc.camera = c;
@@ -255,16 +287,22 @@ export default function Studio3D() {
       if (sel?.curve && selPt !== null && r.handles[selPt]) { r.tc.attach(r.handles[selPt]); r.tc.setMode('translate'); }
       else if (selId && r.meshes.get(selId)) { r.tc.attach(r.meshes.get(selId)!); r.tc.setMode(s.lights.some((l) => l.id === selId) ? 'translate' : tmode); }
     }
+    // Input separation: navigation tools drive the camera; draw tools own the pointer.
+    // Touch: one finger orbits only in navigation tools; two fingers always pan/pinch.
+    const navTool = isNavTool(tool);
     const mb = r.orbit.mouseButtons as Record<string, THREE.MOUSE | null>;
-    mb.LEFT = tool === 'select' ? THREE.MOUSE.ROTATE : null;
-    mb.MIDDLE = THREE.MOUSE.ROTATE; // Shift + middle = pan (OrbitControls modifier)
+    mb.LEFT = navTool ? THREE.MOUSE.ROTATE : null;
+    mb.MIDDLE = tool === 'camera' ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE; // Shift + middle = pan (OrbitControls modifier)
     mb.RIGHT = THREE.MOUSE.PAN;
+    const th = r.orbit.touches as unknown as Record<string, number | null>;
+    th.ONE = navTool ? THREE.TOUCH.ROTATE : null;
+    th.TWO = THREE.TOUCH.DOLLY_PAN;
   }, [scene, selId, selPt, tool, tmode, doc]);
 
   // ---------------- apply navigation requests (Return to scene, panel camera editing)
   const nav = useNav((s) => s.applyView);
   useEffect(() => {
-    if (nav && doc && nav.doc === doc.meta.uuid && R.current) { applyView(nav.view); useNav.setState({ applyView: null }); }
+    if (nav && doc && nav.doc === doc.meta.uuid && R.current) { applyView(nav.view, true); useNav.setState({ applyView: null }); }
   }, [nav, doc]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------------- pointer: select, draw, paint
@@ -275,28 +313,52 @@ export default function Studio3D() {
     const ray = new THREE.Raycaster();
     ray.params.Line = { threshold: 0.04 };
     const ndc = new THREE.Vector2();
-    let stroke: { pts: number[]; plane: THREE.Plane | null; normal: THREE.Vector3; targetObj: THREE.Object3D | null; targetId: string | null } | null = null;
+    let stroke: { pts: number[]; normals: number[]; plane: THREE.Plane | null; normal: THREE.Vector3; targetObj: THREE.Object3D | null; targetId: string | null } | null = null;
     let painting = false;
     let downAt: { x: number; y: number } | null = null;
     let altHeld = false;
+    let panPersistTimer = 0;
+    let pendingPan: { doc: ReturnType<typeof activeDoc>; scene: Scene3D; view: CamView } | null = null;
+    const touchGate = createTouchGestureGate();
     const setRay = (e: PointerEvent) => { const b = el.getBoundingClientRect(); ndc.set(((e.clientX - b.left) / b.width) * 2 - 1, -((e.clientY - b.top) / b.height) * 2 + 1); ray.setFromCamera(ndc, cam()); };
-    const surfaces = () => { const out: THREE.Object3D[] = []; r.content.traverse((x) => { if (x.userData.surface && x.visible) out.push(x); }); return out; };
+    const surfaces = () => {
+      const out: THREE.Object3D[] = [];
+      r.content.traverse((x) => {
+        let visible = true;
+        for (let p: THREE.Object3D | null = x; p && p !== r.content; p = p.parent) if (!p.visible) { visible = false; break; }
+        if (x.userData.surface && visible) out.push(x);
+      });
+      return out;
+    };
     const objIdOf = (x: THREE.Object3D | null): string | null => { while (x) { if (x.userData.objId) return x.userData.objId; if (x.userData.lightId) return x.userData.lightId; x = x.parent; } return null; };
     const snap = (p: THREE.Vector3) => { const s = sceneRef.current; if (s.snap) { const g = s.gridSize; p.set(Math.round(p.x / g) * g, Math.round(p.y / g) * g, Math.round(p.z / g) * g); } return p; };
     const planePoint = (e: PointerEvent, plane: THREE.Plane) => { setRay(e); const p = new THREE.Vector3(); return ray.ray.intersectPlane(plane, p) ? snap(p) : null; };
     const surfacePoint = (e: PointerEvent, only: THREE.Object3D | null) => {
       setRay(e);
-      const hit = ray.intersectObjects(only ? [only] : surfaces(), false)[0];
-      if (!hit || !hit.face) return null;
-      const n = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
-      return { p: hit.point.clone().addScaledVector(n, st.current.thick * 0.6 + 0.003), obj: hit.object };
+      const hit = surfaceHit(ray, only ? [only] : surfaces(), st.current.thick);
+      return hit ? { p: hit.point, normal: hit.normal, obj: hit.object } : null;
     };
-    const showPreview = (pts: number[]) => {
-      r.preview.children.forEach((c) => (c as THREE.Line).geometry.dispose());
+    const showPreview = (pts: number[], normals: number[] = []) => {
+      r.preview.children.forEach((c) => {
+        (c as THREE.Line).geometry.dispose();
+        const material = (c as THREE.Line).material;
+        if (Array.isArray(material)) material.forEach((m) => m.dispose()); else material.dispose();
+      });
       r.preview.clear();
       if (pts.length < 6) return;
-      const mats = st.current.target === 'surface' ? [new THREE.Matrix4()] : symMatrices(sceneRef.current.sym);
-      mats.forEach((m, i) => {
+      const matrices = symMatrices(sceneRef.current.sym);
+      const surfaceTarget = stroke?.targetObj;
+      if (st.current.target === 'surface' && surfaceTarget && normals.length === pts.length) {
+        const paths = projectSurfaceSymmetryPaths(pts, normals, matrices, surfaces(), st.current.thick, surfaceTarget);
+        paths.forEach((path) => {
+          const v: THREE.Vector3[] = [];
+          for (let k = 0; k < path.points.length; k += 3) v.push(new THREE.Vector3(path.points[k], path.points[k + 1], path.points[k + 2]));
+          const mirrored = path.symmetryIndex !== 0;
+          r.preview.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(v), new THREE.LineBasicMaterial({ color: mirrored ? 0x9a7cff : st.current.fg, depthTest: false, transparent: true, opacity: mirrored ? 0.65 : 1 })));
+        });
+        return;
+      }
+      matrices.forEach((m, i) => {
         const p = applyMat(pts, m), v: THREE.Vector3[] = [];
         for (let k = 0; k < p.length; k += 3) v.push(new THREE.Vector3(p[k], p[k + 1], p[k + 2]));
         r.preview.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(v), new THREE.LineBasicMaterial({ color: i ? 0x9a7cff : st.current.fg, depthTest: false, transparent: true, opacity: i ? 0.6 : 1 })));
@@ -311,15 +373,20 @@ export default function Studio3D() {
         ...extra,
       };
     };
-    const addStrokes = (objs: Obj[]) => { update((s) => { s.objects.push(...objs); }); setSel(objs[0].id); setSelPt(null); };
+    const addStrokes = (objs: Obj[]) => {
+      if (!objs.length) return toast('No complete surface stroke could be projected onto a visible mesh. The scene was left unchanged.', 'error');
+      update((s) => { s.objects.push(...objs); });
+      setSel(objs[0].id); setSelPt(null);
+    };
     const finishStroke = () => {
       const k = stroke;
       stroke = null;
       showPreview([]);
-      r.orbit.enabled = true;
       if (!k || k.pts.length < 6) return;
       const s = st.current;
-      let pts = k.pts;
+      const sourcePoints = k.pts.slice();
+      const sourceNormals = k.normals.slice();
+      let pts = k.pts.slice();
       const it = Math.round(s.smoothing * 6);
       if (it) pts = smooth3(pts, it, 0.5);
       const dist = cam().position.distanceTo(r.orbit.target);
@@ -328,14 +395,21 @@ export default function Studio3D() {
       const type = st.current.tool === 'line' ? 'poly' : 'catmull';
       const n = k.normal.toArray().map(rnd) as V3;
       if (k.targetObj && k.targetId) {
-        // surface stroke: stored in the target object's local space, parented, so object transforms carry it
-        k.targetObj.updateMatrixWorld(true);
-        const inv = k.targetObj.matrixWorld.clone().invert();
-        const ws = new THREE.Vector3(); k.targetObj.getWorldScale(ws);
-        const avg = (Math.abs(ws.x) + Math.abs(ws.y) + Math.abs(ws.z)) / 3 || 1;
-        const o = mkStroke(applyMat(pts, inv), type, n, { parent: k.targetId, name: 'Surface stroke' });
-        o.curve!.thickness = s.thick / avg; o.curve!.width = (s.thick * 4) / avg;
-        addStrokes([o]);
+        // Store every copy on its projected target mesh in that mesh's local coordinates.
+        const normals = remapSurfaceNormals(sourcePoints, sourceNormals, pts);
+        const matrices = symMatrices(sceneRef.current.sym);
+        const paths = projectSurfaceSymmetryPaths(pts, normals, matrices, surfaces(), s.thick, k.targetObj);
+        const objs = paths.map((path) => {
+          const local = localizeSurfaceStroke(path.points, path.target);
+          const worldNormal = path.normals.slice(0, 3) as V3;
+          const localNormal = localizeSurfaceNormal(worldNormal, path.target);
+          const targetId = objIdOf(path.target);
+          const mirrored = path.symmetryIndex !== 0;
+          const o = mkStroke(local.points, type, localNormal, { parent: targetId || k.targetId!, name: mirrored ? `Surface stroke (symmetry ${path.symmetryIndex})` : 'Surface stroke' });
+          o.curve!.thickness = s.thick / local.averageWorldScale; o.curve!.width = (s.thick * 4) / local.averageWorldScale;
+          return o;
+        });
+        addStrokes(objs);
         return;
       }
       const mats = symMatrices(sceneRef.current.sym);
@@ -375,8 +449,13 @@ export default function Studio3D() {
       mat.map.needsUpdate = true;
     };
     const down = (e: PointerEvent) => {
+      if (e.pointerType === 'touch' && touchGate.down(e.pointerId)) {
+        cancelStroke(); // latch the complete two-finger gesture to camera navigation
+        return;
+      }
       if (e.button !== 0 || e.altKey) return;
       const s = st.current;
+      if (s.tool === 'camera') return; // dedicated navigation tool: OrbitControls owns every drag
       downAt = { x: e.clientX, y: e.clientY };
       if (s.tool === 'select') {
         if (r.tc.dragging || r.tc.axis) return;
@@ -388,53 +467,97 @@ export default function Studio3D() {
         return;
       }
       el.setPointerCapture(e.pointerId);
-      r.orbit.enabled = false;
       if (s.tool === 'paint') { painting = true; paintAt(e); return; }
-      if (s.target === 'surface' && s.tool === 'draw') {
+      if (s.target === 'surface' && (s.tool === 'draw' || s.tool === 'line')) {
         const h = surfacePoint(e, null);
-        if (!h) { toast('Start a surface stroke on an object (cube, sphere, cylinder, cone, plane, torus or reference image).'); r.orbit.enabled = true; return; }
-        stroke = { pts: [h.p.x, h.p.y, h.p.z], plane: null, normal: new THREE.Vector3(0, 1, 0), targetObj: h.obj, targetId: objIdOf(h.obj) };
+        if (!h) { toast('Start a surface stroke on an object (cube, sphere, cylinder, cone, plane, torus or reference image).'); return; }
+        stroke = { pts: [h.p.x, h.p.y, h.p.z], normals: h.normal.toArray(), plane: null, normal: h.normal, targetObj: h.obj, targetId: objIdOf(h.obj) };
         return;
       }
+      if (s.target === 'surface' && s.tool === 'bezier') { toast('Bézier anchors use a drawing plane. Choose Plane / depth for Bézier curves.'); return; }
       const pl = activePlane();
       const p = planePoint(e, pl.plane);
-      if (!p) { r.orbit.enabled = true; return; }
+      if (!p) return;
       if (s.tool === 'bezier') {
-        if (e.detail >= 2 && bez.current.length >= 6) { finishBezier(); r.orbit.enabled = true; return; }
+        if (e.detail >= 2 && bez.current.length >= 6) { finishBezier(); return; }
         bez.current.push(p.x, p.y, p.z);
         showPreview(bez.current);
         force((x) => x + 1);
-        r.orbit.enabled = true;
         return;
       }
-      stroke = { pts: [p.x, p.y, p.z], plane: pl.plane, normal: pl.normal, targetObj: null, targetId: null };
+      stroke = { pts: [p.x, p.y, p.z], normals: [], plane: pl.plane, normal: pl.normal, targetObj: null, targetId: null };
     };
     const move = (e: PointerEvent) => {
       if (painting) return paintAt(e);
       if (!stroke) return;
       let p: THREE.Vector3 | null = null;
+      let hitNormal: THREE.Vector3 | null = null;
       if (stroke.plane) p = planePoint(e, stroke.plane);
-      else { const h = surfacePoint(e, stroke.targetObj); p = h ? h.p : null; }
+      else {
+        const h = surfacePoint(e, stroke.targetObj);
+        p = h ? h.p : null;
+        hitNormal = h?.normal || null;
+      }
       if (!p) return;
-      if (st.current.tool === 'line') { stroke.pts = [stroke.pts[0], stroke.pts[1], stroke.pts[2], p.x, p.y, p.z]; showPreview(stroke.pts); return; }
+      if (st.current.tool === 'line') {
+        stroke.pts = [stroke.pts[0], stroke.pts[1], stroke.pts[2], p.x, p.y, p.z];
+        if (stroke.targetObj && hitNormal) stroke.normals = [...stroke.normals.slice(0, 3), ...hitNormal.toArray()];
+        showPreview(stroke.pts, stroke.normals);
+        return;
+      }
       const n = stroke.pts.length;
       const minStep = cam().position.distanceTo(r.orbit.target) * 0.002;
-      if (Math.hypot(p.x - stroke.pts[n - 3], p.y - stroke.pts[n - 2], p.z - stroke.pts[n - 1]) > minStep) { stroke.pts.push(p.x, p.y, p.z); showPreview(stroke.pts); }
+      if (Math.hypot(p.x - stroke.pts[n - 3], p.y - stroke.pts[n - 2], p.z - stroke.pts[n - 1]) > minStep) {
+        stroke.pts.push(p.x, p.y, p.z);
+        if (stroke.targetObj && hitNormal) stroke.normals.push(...hitNormal.toArray());
+        showPreview(stroke.pts, stroke.normals);
+      }
     };
     const up = (e: PointerEvent) => {
+      if (e.pointerType === 'touch' && touchGate.up(e.pointerId)) { downAt = null; return; }
       if (painting) {
         painting = false;
-        r.orbit.enabled = true;
         update((s) => { for (const o of s.objects) { const c = paintCanvases.get(o.id); if (c) o.paint = c.toDataURL('image/png'); } });
         return;
       }
       if (stroke) { finishStroke(); return; }
-      r.orbit.enabled = true;
       // a click (not an orbit drag) on empty space clears the selection
       if (st.current.tool === 'select' && downAt && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 4) { setSel(null); setSelPt(null); }
       downAt = null;
     };
-    const cancelStroke = () => { stroke = null; bez.current = []; showPreview([]); r.orbit.enabled = true; force((x) => x + 1); };
+    const cancelStroke = () => { stroke = null; bez.current = []; painting = false; showPreview([]); force((x) => x + 1); };
+    const flushPanPersist = (updateUI = true) => {
+      window.clearTimeout(panPersistTimer);
+      panPersistTimer = 0;
+      const pending = pendingPan;
+      pendingPan = null;
+      if (!pending?.doc) return;
+      const targetScene = pending.doc === activeDoc()
+        ? sceneRef.current
+        : pending.doc.scene3d ? sceneOf(pending.doc.scene3d) : pending.scene;
+      persistSceneCamera(pending.doc, targetScene, pending.view);
+      if (pending.doc === activeDoc()) {
+        sceneRef.current = targetScene;
+        if (updateUI) setSceneState(targetScene);
+      }
+    };
+    r.flushPanPersist = flushPanPersist;
+    // Shift + wheel pans (trackpad-friendly). OrbitControls owns plain wheel = zoom / pinch = zoom.
+    const wheel = (e: WheelEvent) => {
+      if (!e.shiftKey || e.ctrlKey) return;
+      e.preventDefault(); e.stopPropagation();
+      const k = cam().position.distanceTo(r.orbit.target) * 0.0012;
+      const right = new THREE.Vector3().setFromMatrixColumn(cam().matrix, 0);
+      const upv = new THREE.Vector3().setFromMatrixColumn(cam().matrix, 1);
+      const dx = (e.deltaX || 0) * k, dy = (e.deltaY || 0) * k;
+      r.orbit.target.addScaledVector(right, dx).addScaledVector(upv, -dy);
+      cam().position.addScaledVector(right, dx).addScaledVector(upv, -dy);
+      // This custom trackpad-pan path bypasses OrbitControls' start/end events; persist once
+      // the wheel burst settles, or flush before any later camera gesture/view change.
+      pendingPan = { doc: activeDoc(), scene: sceneRef.current, view: getView() };
+      window.clearTimeout(panPersistTimer);
+      panPersistTimer = window.setTimeout(flushPanPersist, 100);
+    };
     const key = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
@@ -455,17 +578,20 @@ export default function Studio3D() {
       else if (k === 'f') view('focus');
       else if (k === 'v') setTool3('select');
       else if (k === 'b') setTool3('draw');
+      else if (k === 'c') setTool3('camera');
       else handled = false;
       if (handled) { e.preventDefault(); e.stopPropagation(); }
     };
-    const keyUp = (e: KeyboardEvent) => { if (e.key === 'Alt') { altHeld = false; (r.orbit.mouseButtons as Record<string, THREE.MOUSE | null>).LEFT = st.current.tool === 'select' ? THREE.MOUSE.ROTATE : null; } };
+    const keyUp = (e: KeyboardEvent) => { if (e.key === 'Alt') { altHeld = false; (r.orbit.mouseButtons as Record<string, THREE.MOUSE | null>).LEFT = isNavTool(st.current.tool) ? THREE.MOUSE.ROTATE : null; } };
+    const cancelled = (e: PointerEvent) => { if (e.pointerType === 'touch') touchGate.up(e.pointerId); cancelStroke(); };
     el.addEventListener('pointerdown', down);
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
-    el.addEventListener('pointercancel', cancelStroke);
+    el.addEventListener('pointercancel', cancelled);
+    el.parentElement?.addEventListener('wheel', wheel, { passive: false, capture: true });
     window.addEventListener('keydown', key, true); // capture: 3D undo/redo must not reach the 2D shortcut handler
     window.addEventListener('keyup', keyUp);
-    return () => { el.removeEventListener('pointerdown', down); el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', cancelStroke); window.removeEventListener('keydown', key, true); window.removeEventListener('keyup', keyUp); };
+    return () => { flushPanPersist(false); if (r.flushPanPersist === flushPanPersist) r.flushPanPersist = null; el.removeEventListener('pointerdown', down); el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', cancelled); el.parentElement?.removeEventListener('wheel', wheel, { capture: true }); window.removeEventListener('keydown', key, true); window.removeEventListener('keyup', keyUp); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [webgl]);
 
@@ -536,13 +662,13 @@ export default function Studio3D() {
       if (!m) return toast('Select an object or stroke to focus.');
       const b = new THREE.Box3().setFromObject(m), c = b.getCenter(new THREE.Vector3()), rad = b.getSize(new THREE.Vector3()).length() || 1;
       const dir = cam().position.clone().sub(r.orbit.target).normalize();
-      return applyView({ ...getView(), target: c.toArray() as V3, pos: c.clone().addScaledVector(dir, rad * 1.6 + 0.5).toArray() as V3 });
+      return applyView({ ...getView(), target: c.toArray() as V3, pos: c.clone().addScaledVector(dir, rad * 1.6 + 0.5).toArray() as V3 }, true);
     }
     const t = r.orbit.target.clone(), d = Math.max(4, cam().position.distanceTo(t));
     const dirs: Record<string, V3> = { front: [0, 0, 1], back: [0, 0, -1], left: [-1, 0, 0], right: [1, 0, 0], top: [0, 1, 0.0001], bottom: [0, -1, 0.0001], iso: [0.577, 0.577, 0.577] };
-    if (v === 'reset') return applyView({ ...DEFAULT_VIEW, ortho: sceneRef.current.ortho });
+    if (v === 'reset') return applyView({ ...DEFAULT_VIEW, ortho: sceneRef.current.ortho }, true);
     const p = t.clone().addScaledVector(new THREE.Vector3(...dirs[v]).normalize(), d);
-    applyView({ ...getView(), pos: p.toArray() as V3, target: t.toArray() as V3 });
+    applyView({ ...getView(), pos: p.toArray() as V3, target: t.toArray() as V3 }, true);
   }
   const saveView = async () => {
     const n = await promptDialog('Save camera view', 'Name (e.g. “Hero close-up”, “Street wide”):', `View ${sceneRef.current.views.length + 1}`);
@@ -570,6 +696,17 @@ export default function Studio3D() {
     new GLTFExporter().parse(root, (res) => { download(new Blob([res as ArrayBuffer], { type: 'model/gltf-binary' }), (activeDoc()?.name || 'scene') + '.glb'); toast('Exported GLB (glTF 2.0)', 'success'); }, (err) => toast('GLB export failed: ' + err, 'error'), { binary: true });
   };
   const setDraw = (p: Partial<Scene3D['draw']>, record = false) => update((s) => { s.draw = { ...s.draw, ...p }; }, record);
+  /** Camera perspective strength (field of view); saved with the scene like position and target. */
+  const setFov = (fov: number) => {
+    const r = R.current;
+    if (!r) return;
+    r.persp.fov = fov;
+    r.persp.updateProjectionMatrix();
+    update((s) => {
+      const base = s.camera || getViewFor(s.ortho);
+      s.camera = { ...base, fov, ortho: s.ortho };
+    }, false);
+  };
   const setSym = (p: Partial<Scene3D['sym']>) => update((s) => { s.sym = { ...s.sym, ...p }; }, false);
   const symCount = symMatrices(scene.sym).length;
 
@@ -587,6 +724,7 @@ export default function Studio3D() {
   return (
     <div className="absolute inset-0 flex">
       <div className="flex w-12 flex-col items-center gap-1 border-r border-black/50 bg-[#161618] py-2" aria-label="3D tools">
+        {T('camera', Orbit, 'Camera / navigate (C): drag to orbit · wheel zoom · Shift+wheel or right-drag pan · touch: 1 finger orbit, 2 fingers pan & pinch')}
         {T('select', MousePointer2, 'Select & edit (V): click objects, strokes or control points. W/E/R = move/rotate/scale, F = focus, Delete = remove')}
         {T('draw', PenLine, 'Freehand stroke in space (B): draws on the active plane or on surfaces. [ / ] move the depth plane')}
         {T('bezier', Spline, 'Bézier curve: click anchors, then Enter or double-click to finish')}
@@ -599,10 +737,19 @@ export default function Studio3D() {
       <div className="relative min-w-0 flex-1">
         <div ref={host} className="absolute inset-0" />
         <div className="pointer-events-none absolute left-3 top-3 max-w-[70%] rounded bg-black/55 px-2 py-1 text-[11px] text-neutral-200">
-          <b className="text-[#E8913A]">{tool === 'select' ? 'Select' : tool === 'paint' ? 'Paint' : tool === 'bezier' ? 'Bézier' : tool === 'line' ? 'Line' : 'Freehand'}</b>
-          {drawingTool && <> · {target === 'surface' ? 'on object surfaces' : `${PLANE_LABEL[scene.draw.mode]}, depth ${scene.draw.offset.toFixed(2)}`}{symCount > 1 && target === 'plane' ? ` · symmetry ×${symCount}` : ''}</>}
+          <b className={tool === 'camera' ? 'text-sky-300' : 'text-[#E8913A]'}>{tool === 'camera' ? 'Camera · navigate' : tool === 'select' ? 'Select' : tool === 'paint' ? 'Paint' : tool === 'bezier' ? 'Bézier' : tool === 'line' ? 'Line' : 'Freehand'}</b>
+          {drawingTool && <> · {target === 'surface' ? (tool === 'bezier' ? 'Bézier needs a drawing plane' : 'on object surfaces') : `${PLANE_LABEL[scene.draw.mode]}, depth ${scene.draw.offset.toFixed(2)}`}{symCount > 1 && !(target === 'surface' && tool === 'bezier') ? ` · ${target === 'surface' ? 'surface symmetry' : 'symmetry'} ×${symCount}` : ''}</>}
           {tool === 'bezier' && bez.current.length > 0 && ` · ${bez.current.length / 3} anchors`}
-          <span className="ml-2 text-neutral-400">Middle-drag orbit · Shift+middle pan · Right-drag pan · Wheel zoom{tool !== 'select' ? ' · Alt+left orbit' : ' · Left-drag empty space orbits'}</span>
+          {drawingTool && scene.ground !== false && target === 'plane' && scene.draw.mode === 'xz' && scene.draw.offset === 0 && ' · on the white ground'}
+          <span className="ml-2 text-neutral-400">
+            {touchDevice
+              ? (drawingTool && target === 'plane'
+                ? '1 finger draws · 2 fingers pan & pinch zoom · use the Camera tool to orbit with 1 finger'
+                : '1 finger orbits (Camera / Select) · 2 fingers pan & pinch zoom')
+              : tool === 'camera'
+                ? 'Drag orbit · Middle or right-drag pan · Wheel zoom · Shift+wheel pan'
+                : `Middle-drag orbit · Shift+middle pan · Right-drag pan · Wheel zoom${tool !== 'select' ? ' · Alt+left orbit' : ' · Left-drag empty space orbits'}`}
+          </span>
         </div>
         {panelEdit && panelEdit.sceneDoc === doc.meta.uuid && (
           <>
@@ -638,7 +785,7 @@ export default function Studio3D() {
             {scene.snap && <Slider label="Grid step" value={scene.gridSize} min={0.05} max={1} step={0.05} fmt={(v) => v.toFixed(2)} onChange={(v) => update((s) => { s.gridSize = v; }, false)} />}
             <p className="text-[10px] text-neutral-500">The orange grid shows where strokes land. A mouse can't sense depth, so you choose it with the plane: press [ and ] to push it in or pull it out, or use Depth plane mode to draw facing the camera.</p>
           </>
-        ) : <p className="text-[10px] text-neutral-500">Strokes stick to the surface you start on and follow that object when it moves. Supported surfaces: cube, sphere, cylinder, cone, plane, torus and reference images. Symmetry isn't applied to surface strokes.</p>}
+        ) : <p className="text-[10px] text-neutral-500">Freehand and straight-line strokes stick to the surface you start on and follow that object when it moves. Mirror and radial copies are ray-projected onto visible meshes and parented to the surface they hit; a copy is skipped if its full path cannot stay on one matching surface. Every copy is a separate editable curve. Bézier anchors require Plane / depth. Supported surfaces: cube, sphere, cylinder, cone, plane, torus and reference images.</p>}
 
         <S3>Stroke style</S3>
         <div className="flex items-center gap-2 text-neutral-400">Color <span className="h-4 w-6 rounded border border-white/20" style={{ background: fg }} /> <span className="text-[10px]">(foreground color)</span></div>
@@ -653,7 +800,7 @@ export default function Studio3D() {
         <Slider label="Radial copies" value={scene.sym.radial} min={1} max={16} step={1} fmt={(v) => String(v)} onChange={(v) => setSym({ radial: v })} />
         {scene.sym.radial > 1 && <Select label="Axis" value={scene.sym.axis} onChange={(v) => setSym({ axis: v })} options={[{ value: 'y', label: 'Y (vertical)' }, { value: 'x', label: 'X' }, { value: 'z', label: 'Z' }]} />}
         <div className="grid grid-cols-3 gap-1">{(['x', 'y', 'z'] as const).map((a, i) => <label key={a} className="text-[10px] text-neutral-500">Center {a}<input type="number" step={0.1} value={scene.sym.center[i]} onKeyDown={(e) => e.stopPropagation()} onChange={(e) => { const c = [...scene.sym.center] as V3; c[i] = Number(e.target.value) || 0; setSym({ center: c }); }} className="w-full rounded bg-neutral-900 px-1 py-0.5 text-neutral-200 outline-none ring-1 ring-white/10" /></label>)}</div>
-        <p className="text-[10px] text-neutral-500">Purple preview lines show the symmetric copies while you draw.</p>
+        <p className="text-[10px] text-neutral-500">Purple preview lines show editable copies; on object surfaces they are projected to real visible meshes, never left as floating transformed geometry.</p>
 
         {sel && (
           <div className="space-y-1 border-t border-white/5 pt-2">
@@ -730,13 +877,27 @@ export default function Studio3D() {
           <Btn onClick={saveView}><Camera size={11} /> Save current view</Btn>
           {scene.views.map((v) => (
             <div key={v.id} className="flex items-center gap-1">
-              <button className="flex-1 truncate rounded bg-white/5 px-2 py-1 text-left text-neutral-300 hover:bg-white/10" onClick={() => applyView(v.view)}>{v.name}</button>
+              <button className="flex-1 truncate rounded bg-white/5 px-2 py-1 text-left text-neutral-300 hover:bg-white/10" onClick={() => applyView(v.view, true)}>{v.name}</button>
               <button title="Update to current camera" className="text-neutral-500 hover:text-white" onClick={() => update((s) => { s.views.find((x) => x.id === v.id)!.view = getView(); })}>⟳</button>
               <button title="Rename" className="text-neutral-500 hover:text-white" onClick={async () => { const n = await promptDialog('Rename view', 'Name:', v.name); if (n) update((s) => { s.views.find((x) => x.id === v.id)!.name = n; }); }}>✎</button>
               <button title="Delete" className="text-neutral-500 hover:text-red-400" onClick={async () => { if ((await confirmDialog('Delete view?', `Remove the saved view “${v.name}”? Panels already captured keep their own copy of the camera.`, [{ label: 'Cancel', value: 'n' }, { label: 'Delete', value: 'y', variant: 'danger' }])) === 'y') update((s) => { s.views = s.views.filter((x) => x.id !== v.id); }); }}><Trash2 size={11} /></button>
             </div>
           ))}
           <div className="flex gap-2"><Toggle label="Grid" checked={scene.grid} onChange={(v) => update((s) => { s.grid = v; }, false)} /><Toggle label="Axes" checked={scene.axes} onChange={(v) => update((s) => { s.axes = v; }, false)} /></div>
+        </div>
+
+        <div className="space-y-1 border-t border-white/5 pt-2">
+          <S3>Environment · White Ground</S3>
+          <Toggle label="White ground plane" checked={scene.ground !== false} onChange={(v) => update((s) => { s.ground = v; })} />
+          {scene.ground !== false && (
+            <>
+              <div className="flex items-center gap-2 text-neutral-500">Ground color<input type="color" value={scene.groundColor || '#ffffff'} onChange={(e) => update((s) => { s.groundColor = e.target.value; }, false)} /></div>
+              <Toggle label="Subtle shadows on the ground" checked={!!scene.groundShadow} onChange={(v) => update((s) => { s.groundShadow = v; })} />
+              <p className="text-[10px] text-neutral-500">A flat, pure-white drawing surface. Shadows use a separate soft catcher, so the ground itself stays white.</p>
+            </>
+          )}
+          <Slider label="Grid spacing" value={scene.gridSize} min={0.05} max={2} step={0.05} fmt={(v) => v.toFixed(2)} onChange={(v) => update((s) => { s.gridSize = v; }, false)} />
+          <Slider label="Field of view" value={scene.camera?.fov || 45} min={18} max={95} step={1} fmt={(v) => v + '°'} onChange={setFov} />
         </div>
 
         <div className="space-y-1 border-t border-white/5 pt-2">

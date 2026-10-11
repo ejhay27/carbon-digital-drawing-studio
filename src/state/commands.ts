@@ -76,6 +76,7 @@ export function runAction(id: string) {
   const s = getApp();
   if (id.startsWith('tool.')) return setTool(id.slice(5) as ToolId);
   switch (id) {
+    case 'app.commandPalette': return setApp({ dialog: 'commandPalette' });
     case 'edit.undo': return undo();
     case 'edit.redo': case 'edit.redo2': return redo();
     case 'file.new': return setApp({ dialog: 'new' });

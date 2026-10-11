@@ -1,6 +1,8 @@
-# CARBON 1.0: *Where all starts begin.*
+# Carbon: Prime — *Where all starts begin.*
 
-A professional 2D drawing and illustration studio: a canvas-first, customizable workspace with an extensive brush engine, editable Crisp Ink paths and a complete Drawing Replay system. It works fully offline, needs no account and sends no telemetry.
+A professional, local-first creative studio for drawing, painting, illustration, spatial (3D) drawing and comics: a canvas-first, customizable workspace with an extensive brush engine, editable Crisp Ink paths, a complete Drawing Replay system, the White-Ground 3D Studio, Comic Studio and a local brush library. It works fully offline, needs no account and sends no telemetry. Release line: 7.x+ls (see [PRIME-7.md](./PRIME-7.md)).
+
+> **Documentation scope:** This engine deep-dive began as Carbon 1.0 documentation and preserves some historical platform, limitation and roadmap notes below. Those notes are not current Carbon: Prime 7.1.1+ls status. The current source-candidate audit and platform boundaries are in [`AUDIT-7.1.0+ls.md`](./AUDIT-7.1.0+ls.md), [`WINDOWS.md`](./WINDOWS.md) and [`ANDROID.md`](./ANDROID.md). The 3D workspace discussed as future work in §9 now exists as 3D Studio.
 
 ---
 
@@ -17,7 +19,7 @@ npm run dev        # development server
 * **Windows desktop:** open in Edge or Chrome, or install it as an app from the browser ("Install CARBON").
 * **Android tablets:** open in Chrome and use *Add to Home screen*. The tablet interface turns on automatically on coarse-pointer devices, or you can force it in *Settings → Interface*.
 
-* **Android APK:** see [`ANDROID.md`](./ANDROID.md). `node scripts/android.mjs --apk` (or the included GitHub Actions workflow) wraps the same build in a Capacitor 8 shell with native file storage, sharing, back-button handling, lifecycle autosave and palm rejection.
+* **Android APK:** see [`ANDROID.md`](./ANDROID.md). `node scripts/android.mjs --apk` wraps the same build in a Capacitor 8 shell with native file storage, sharing, back-button handling, lifecycle autosave and palm rejection. This checkout has no current Android GitHub Actions workflow; the documented local build path and its verification limits are in `ANDROID.md`.
 
 > **Platform note (honest scope):** this release is implemented as a web application (TypeScript + React + Canvas 2D), not as the C++/Qt native build described in the master brief. The engine has no UI dependencies (`src/engine/*`), and platform-specific work (file access, storage, input) sits behind small adapters (`state/actions.ts`, `engine/persist.ts`, Pointer Events). That leaves room for native packaging (Tauri/Capacitor, or a Qt port of the engine) later. Native installers were **not** produced or tested in this milestone.
 
@@ -126,6 +128,6 @@ Automated tests run in isolated documents:
 * WebP export depends on browser encoder support (with a warning and PNG fallback).
 * Video export runs in real time at the chosen speed (playback is capped at about 90 s).
 
-## 9. CARBON Space (future 3D workspace)
+## 9. Historical CARBON Space roadmap (1.0)
 
-This is not part of 1.0. The planned direction is a spatial canvas with drawing on 3D planes and surfaces, orbit/pan/dolly navigation, 3D reference objects, scene organisation and hybrid 2D/3D compositions with its own tool palette. It is inspired by spatial-sketching interaction patterns and uses CARBON's own design language. Animation (timelines, keyframes, onion skinning) is explicitly excluded.
+This section records the original 1.0 roadmap, not the current 7.x product scope. Its planned spatial canvas—drawing on planes and surfaces, orbit/pan/dolly navigation, reference objects, scene organisation and hybrid 2D/3D compositions—was later implemented as the existing 3D Studio; see [`WINDOWS.md`](./WINDOWS.md) and [`PRIME-7.md`](./PRIME-7.md). Animation (timelines, keyframes, onion skinning) remains explicitly outside this project scope.

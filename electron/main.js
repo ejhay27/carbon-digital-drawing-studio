@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 
-app.setName('CARBON');
+app.setName('CARBON PRIME');
 
 const DEV_URL  = 'http://localhost:5173';
 const distPath = path.join(__dirname, '..', 'dist', 'index.html');
@@ -21,7 +21,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: '#141416',
-    title: 'CARBON',
+    title: 'CARBON PRIME',
     icon: fs.existsSync(iconPath) ? iconPath : undefined,
     autoHideMenuBar: true,
     show: false,

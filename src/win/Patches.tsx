@@ -57,7 +57,7 @@ export function ReleaseDetails({ r }: { r: Release }) {
 function Header({ r, current }: { r: Release; current: boolean }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="font-mono text-sm font-semibold text-neutral-100">v{r.version}</span>
+      <span className="font-mono text-sm font-semibold text-neutral-100">v{r.version}{r.suffix || ''}</span>
       <span className={cn('rounded border px-1.5 py-0.5 text-[10px] font-medium', CAT[r.category].chip)}>{CAT[r.category].label}</span>
       {current && <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-neutral-200">Current build</span>}
       <span className="text-[11px] text-neutral-500">{fmtDate(r.date)}</span>
@@ -74,7 +74,7 @@ export function LatestPatches() {
     <section aria-labelledby="latest-patches" className="rounded-xl border border-white/10 bg-white/[0.02]">
       <div className="flex flex-wrap items-center gap-2 border-b border-white/5 px-4 py-2.5">
         <h3 id="latest-patches" className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400"><History size={12} /> Latest Patches</h3>
-        <span className="text-[10px] text-neutral-600">Installed: CARBON {APP_VERSION} (Windows)</span>
+        <span className="text-[10px] text-neutral-600">Installed: CARBON PRIME {APP_VERSION} (Windows)</span>
         <div className="flex-1" />
         {!online && <span className="flex items-center gap-1 rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-neutral-400" title="You're offline. Release notes are bundled with the app, so they still work."><WifiOff size={10} /> Offline: notes bundled with this build</span>}
         <Btn onClick={() => setApp({ dialog: 'patches' })} disabled={!RELEASES.length}>View all updates</Btn>
@@ -83,7 +83,7 @@ export function LatestPatches() {
         <p className="px-4 py-4 text-xs text-neutral-500">No release notes are bundled with this build.</p>
       ) : (
         <div className="space-y-2 px-4 py-3">
-          <Header r={r} current={r.version === APP_VERSION} />
+          <Header r={r} current={r.version + (r.suffix || '') === APP_VERSION} />
           <div className="text-sm font-medium text-neutral-100">{r.title}</div>
           <p className="text-[12px] leading-relaxed text-neutral-400">{r.summary}</p>
           <div className="flex flex-wrap gap-3 text-[11px] text-neutral-500">
@@ -128,7 +128,7 @@ export function PatchesDialog() {
               <li key={r.version} className="relative">
                 <span className={cn('absolute -left-[26px] top-1.5 h-3 w-3 rounded-full ring-4 ring-[#1c1c1f]', CAT[r.category].dot)} />
                 <button onClick={() => setOpen(isOpen ? null : r.version)} aria-expanded={isOpen} className="w-full rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2 text-left hover:border-white/15">
-                  <Header r={r} current={r.version === APP_VERSION} />
+                  <Header r={r} current={r.version + (r.suffix || '') === APP_VERSION} />
                   <div className="mt-1 flex items-center gap-1 text-[13px] font-medium text-neutral-100">{isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />} {r.title}</div>
                   <p className="mt-0.5 text-[11px] text-neutral-400">{r.summary}</p>
                 </button>

@@ -3,6 +3,7 @@ import { Capacitor, SystemBars, SystemBarsStyle } from '@capacitor/core';
 import { Directory, Filesystem } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { App } from '@capacitor/app';
+import { replaceProjectFile, type ProjectFileSystem } from './safeProjectWrite';
 
 export const isNative = () => Capacitor.isNativePlatform();
 export const isAndroid = () => Capacitor.getPlatform() === 'android';
@@ -45,28 +46,25 @@ async function ensureStorage() {
 const safe = (n: string) => n.replace(/[\\/:*?"<>|]+/g, '_').trim() || 'Untitled';
 
 /**
- * Safe project write: data goes to a temp file first; the existing project is only
- * replaced after the temp file has been fully written and its size verified.
+ * Safe project replacement: verify a unique staging file, keep a rollback copy of any existing
+ * project, then install and verify the new bytes before removing that copy.
  */
 export async function writeProject(fileName: string, bytes: Uint8Array): Promise<{ path: string; uri: string }> {
   await ensureStorage();
   const name = safe(fileName).replace(/(\.carbon)?$/i, '.carbon');
   const path = `${PROJECT_DIR}/${name}`;
-  const tmp = `${PROJECT_DIR}/.${name}.tmp`;
+  const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const tmp = `${PROJECT_DIR}/.${name}.${token}.tmp`;
+  const backup = `${PROJECT_DIR}/.${name}.${token}.bak`;
   const data = toBase64(bytes);
-  await Filesystem.writeFile({ path: tmp, data, directory: baseDir, recursive: true });
-  const st = await Filesystem.stat({ path: tmp, directory: baseDir });
-  if (st.size !== bytes.length) {
-    await Filesystem.deleteFile({ path: tmp, directory: baseDir }).catch(() => null);
-    throw new Error(`Write verification failed (${st.size} of ${bytes.length} bytes). The previous file is untouched.`);
-  }
-  await Filesystem.deleteFile({ path, directory: baseDir }).catch(() => null);
-  try {
-    await Filesystem.rename({ from: tmp, to: path, directory: baseDir, toDirectory: baseDir });
-  } catch {
-    // rename unsupported on this storage: write directly (bytes still in memory, temp copy kept as backup)
-    await Filesystem.writeFile({ path, data, directory: baseDir, recursive: true });
-  }
+  await replaceProjectFile(Filesystem as unknown as ProjectFileSystem, {
+    directory: baseDir,
+    path,
+    temporaryPath: tmp,
+    backupPath: backup,
+    data,
+    expectedSize: bytes.length,
+  });
   const { uri } = await Filesystem.getUri({ path, directory: baseDir });
   return { path, uri };
 }
