@@ -1,6 +1,6 @@
-# CARBON 1.0: *Where all starts begin.*
+# Carbon: Prime — *Where all starts begin.*
 
-A professional 2D drawing and illustration studio: a canvas-first, customizable workspace with an extensive brush engine, editable Crisp Ink paths and a complete Drawing Replay system. It works fully offline, needs no account and sends no telemetry.
+A professional, local-first creative studio for drawing, painting, illustration, spatial (3D) drawing and comics: a canvas-first, customizable workspace with an extensive brush engine, editable Crisp Ink paths, a complete Drawing Replay system, the White-Ground 3D Studio, Comic Studio and a local brush library. It works fully offline, needs no account and sends no telemetry. Release line: 7.x+ls (see [PRIME-7.md](./PRIME-7.md)).
 
 ---
 

@@ -50,7 +50,7 @@ const portable = path.join(OUT, 'CARBON-portable');
 // keep the previous verified build recoverable instead of overwriting it
 if (fs.existsSync(path.join(portable, 'CARBON.html'))) {
   let prev = 'unknown';
-  try { prev = (fs.readFileSync(path.join(portable, 'README.txt'), 'utf8').match(/CARBON (\d+\.\d+\.\d+)/) || [])[1] || prev; } catch { /* no readme */ }
+  try { prev = (fs.readFileSync(path.join(portable, 'README.txt'), 'utf8').match(/CARBON(?: PRIME)? (\d+\.\d+\.\d+)/) || [])[1] || prev; } catch { /* no readme */ }
   const keep = path.join(OUT, 'previous', `CARBON-portable-${prev}${prev === VERSION ? '-' + Date.now() : ''}`);
   fs.mkdirSync(path.dirname(keep), { recursive: true });
   fs.renameSync(portable, keep);
@@ -60,7 +60,7 @@ fs.rmSync(portable, { recursive: true, force: true });
 fs.mkdirSync(portable, { recursive: true });
 fs.copyFileSync(html, path.join(portable, 'CARBON.html'));
 fs.writeFileSync(path.join(portable, 'README.txt'), [
-  `CARBON ${VERSION} (Windows edition): portable`,
+  `CARBON PRIME ${VERSION}+ls (Windows edition): portable`,
   '',
   'Open CARBON.html in Microsoft Edge or Google Chrome. Everything runs offline; artwork stays on this PC.',
   'Tip: Edge > ... > Apps > "Install this site as an app" opens CARBON in its own window.',

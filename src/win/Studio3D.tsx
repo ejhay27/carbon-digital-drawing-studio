@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
-import { Brush, Camera, Copy, Download, Eye, EyeOff, Image as ImageIcon, MousePointer2, PenLine, Redo2, Slash, Spline, Trash2, Undo2 } from 'lucide-react';
+import { Brush, Camera, Copy, Download, Eye, EyeOff, Image as ImageIcon, MousePointer2, Orbit, PenLine, Redo2, Slash, Spline, Trash2, Undo2 } from 'lucide-react';
 import type { CamView } from '../engine/types';
 import { activeDoc, confirmDialog, getApp, promptDialog, toast, useApp } from '../state/store';
 import { compositeDoc } from '../engine/render';
@@ -12,16 +12,18 @@ import { pickFile } from '../state/actions';
 import { Btn, Select, Slider, Toggle } from '../components/ui';
 import { cn } from '../utils/cn';
 import {
-  applyMat, attachHierarchy, buildLights, buildObjects, curveGeometry, DEFAULT_VIEW, MAT_PRESETS, orthoHalfHeight, paintCanvases, paintCanvasFor, round3,
+  applyMat, attachHierarchy, buildEnvironment, buildLights, buildObjects, curveGeometry, DEFAULT_VIEW, makeGrid, MAT_PRESETS, orthoHalfHeight, paintCanvases, paintCanvasFor, round3,
   sceneOf, simplify3, smooth3, symMatrices, texBus, useNav, webglAvailable, type Geo, type Kind, type Obj, type PlaneMode, type Scene3D, type V3,
 } from './sceneRender';
 import { captureToLayer, finishPanelEdit } from './Continuum';
 
-type Tool3 = 'select' | 'draw' | 'bezier' | 'line' | 'paint';
+type Tool3 = 'camera' | 'select' | 'draw' | 'bezier' | 'line' | 'paint';
+/** Tools in which a pointer drag navigates instead of drawing. */
+const isNavTool = (t: Tool3) => t === 'camera' || t === 'select';
 type Target = 'plane' | 'surface';
 interface Rig {
   renderer: THREE.WebGLRenderer; scene: THREE.Scene; persp: THREE.PerspectiveCamera; ortho: THREE.OrthographicCamera; orbit: OrbitControls; tc: TransformControls;
-  content: THREE.Group; lights: THREE.Group; preview: THREE.Group; planeViz: THREE.Group; grid: THREE.GridHelper; axes: THREE.AxesHelper; ambient: THREE.AmbientLight;
+  content: THREE.Group; lights: THREE.Group; preview: THREE.Group; planeViz: THREE.Group; env: THREE.Group; grid: THREE.GridHelper | null; axes: THREE.AxesHelper; ambient: THREE.AmbientLight;
   meshes: Map<string, THREE.Object3D>; handles: THREE.Mesh[];
 }
 const rnd = (v: number) => Math.round(v * 1000) / 1000; // stored coordinates are rounded to 1/1000 unit
@@ -58,6 +60,7 @@ export default function Studio3D() {
   const [transparentRender, setTransparentRender] = useState(true);
   const [busy, setBusy] = useState(false);
   const [webgl] = useState(webglAvailable);
+  const [touchDevice] = useState(() => typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches);
   const [, force] = useState(0);
   const hist = useRef<{ undo: string[]; redo: string[] }>({ undo: [], redo: [] });
   const R = useRef<Rig | null>(null);
@@ -128,7 +131,8 @@ export default function Studio3D() {
     orbit.dampingFactor = 0.12;
     const tc = new TransformControls(persp, renderer.domElement);
     sc.add(tc.getHelper());
-    const grid = new THREE.GridHelper(20, 80, 0x55555f, 0x36363b);
+    const env = new THREE.Group(); // White Ground environment (ground plane + optional shadow catcher)
+    let grid: THREE.GridHelper | null = makeGrid(sceneRef.current);
     const axes = new THREE.AxesHelper(1.5);
     const content = new THREE.Group(), lights = new THREE.Group(), preview = new THREE.Group(), planeViz = new THREE.Group();
     const ambient = new THREE.AmbientLight(0xffffff, 0.5);
@@ -137,8 +141,8 @@ export default function Studio3D() {
     (pg.material as THREE.Material).transparent = true; (pg.material as THREE.Material).opacity = 0.55; (pg.material as THREE.Material).depthWrite = false;
     const sheet = new THREE.Mesh(new THREE.PlaneGeometry(4, 4).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xe8913a, transparent: true, opacity: 0.07, side: THREE.DoubleSide, depthWrite: false }));
     planeViz.add(pg, sheet);
-    sc.add(grid, axes, content, lights, ambient, preview, planeViz);
-    const r: Rig = { renderer, scene: sc, persp, ortho, orbit, tc, content, lights, preview, planeViz, grid, axes, ambient, meshes: new Map(), handles: [] };
+    sc.add(env, grid, axes, content, lights, ambient, preview, planeViz);
+    const r: Rig = { renderer, scene: sc, persp, ortho, orbit, tc, content, lights, preview, planeViz, env, grid, axes, ambient, meshes: new Map(), handles: [] };
     R.current = r;
     applyView(sceneRef.current.camera || DEFAULT_VIEW);
     tc.addEventListener('dragging-changed', (e) => { const v = (e as unknown as { value: boolean }).value; orbit.enabled = !v; if (!v) syncFromTC(); });
@@ -224,7 +228,16 @@ export default function Studio3D() {
     if (!r) return;
     const s = scene;
     r.scene.background = new THREE.Color(s.bg);
-    r.grid.visible = s.grid; r.axes.visible = s.axes; r.ambient.intensity = s.ambient;
+    r.axes.visible = s.axes; r.ambient.intensity = s.ambient;
+    // White Ground environment: a real flat ground plane + subtle shadow catcher, rebuilt from scene data
+    disposeTree(r.env);
+    r.env.clear();
+    if (s.ground !== false) r.env.add(buildEnvironment(s));
+    r.env.visible = s.ground !== false;
+    if (r.grid) { r.scene.remove(r.grid); r.grid.dispose(); }
+    r.grid = makeGrid(s); // perspective grid: spacing follows the scene's grid size, colors adapt to the surface
+    r.grid.visible = s.grid;
+    r.scene.add(r.grid);
     const c = s.ortho ? r.ortho : r.persp;
     r.orbit.object = c;
     r.tc.camera = c;
@@ -255,10 +268,16 @@ export default function Studio3D() {
       if (sel?.curve && selPt !== null && r.handles[selPt]) { r.tc.attach(r.handles[selPt]); r.tc.setMode('translate'); }
       else if (selId && r.meshes.get(selId)) { r.tc.attach(r.meshes.get(selId)!); r.tc.setMode(s.lights.some((l) => l.id === selId) ? 'translate' : tmode); }
     }
+    // Input separation: navigation tools drive the camera; draw tools own the pointer.
+    // Touch: one finger orbits only in navigation tools; two fingers always pan/pinch.
+    const navTool = isNavTool(tool);
     const mb = r.orbit.mouseButtons as Record<string, THREE.MOUSE | null>;
-    mb.LEFT = tool === 'select' ? THREE.MOUSE.ROTATE : null;
-    mb.MIDDLE = THREE.MOUSE.ROTATE; // Shift + middle = pan (OrbitControls modifier)
+    mb.LEFT = navTool ? THREE.MOUSE.ROTATE : null;
+    mb.MIDDLE = tool === 'camera' ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE; // Shift + middle = pan (OrbitControls modifier)
     mb.RIGHT = THREE.MOUSE.PAN;
+    const th = r.orbit.touches as unknown as Record<string, number | null>;
+    th.ONE = navTool ? THREE.TOUCH.ROTATE : null;
+    th.TWO = THREE.TOUCH.DOLLY_PAN;
   }, [scene, selId, selPt, tool, tmode, doc]);
 
   // ---------------- apply navigation requests (Return to scene, panel camera editing)
@@ -279,6 +298,7 @@ export default function Studio3D() {
     let painting = false;
     let downAt: { x: number; y: number } | null = null;
     let altHeld = false;
+    let pointers = 0; // active pointers on the viewport (for two-finger navigation)
     const setRay = (e: PointerEvent) => { const b = el.getBoundingClientRect(); ndc.set(((e.clientX - b.left) / b.width) * 2 - 1, -((e.clientY - b.top) / b.height) * 2 + 1); ray.setFromCamera(ndc, cam()); };
     const surfaces = () => { const out: THREE.Object3D[] = []; r.content.traverse((x) => { if (x.userData.surface && x.visible) out.push(x); }); return out; };
     const objIdOf = (x: THREE.Object3D | null): string | null => { while (x) { if (x.userData.objId) return x.userData.objId; if (x.userData.lightId) return x.userData.lightId; x = x.parent; } return null; };
@@ -316,7 +336,6 @@ export default function Studio3D() {
       const k = stroke;
       stroke = null;
       showPreview([]);
-      r.orbit.enabled = true;
       if (!k || k.pts.length < 6) return;
       const s = st.current;
       let pts = k.pts;
@@ -375,8 +394,11 @@ export default function Studio3D() {
       mat.map.needsUpdate = true;
     };
     const down = (e: PointerEvent) => {
+      pointers++;
+      if (pointers > 1 && (stroke || painting || bez.current.length)) cancelStroke(); // two fingers = navigate, never draw
       if (e.button !== 0 || e.altKey) return;
       const s = st.current;
+      if (s.tool === 'camera') return; // dedicated navigation tool: OrbitControls owns every drag
       downAt = { x: e.clientX, y: e.clientY };
       if (s.tool === 'select') {
         if (r.tc.dragging || r.tc.axis) return;
@@ -388,23 +410,21 @@ export default function Studio3D() {
         return;
       }
       el.setPointerCapture(e.pointerId);
-      r.orbit.enabled = false;
       if (s.tool === 'paint') { painting = true; paintAt(e); return; }
       if (s.target === 'surface' && s.tool === 'draw') {
         const h = surfacePoint(e, null);
-        if (!h) { toast('Start a surface stroke on an object (cube, sphere, cylinder, cone, plane, torus or reference image).'); r.orbit.enabled = true; return; }
+        if (!h) { toast('Start a surface stroke on an object (cube, sphere, cylinder, cone, plane, torus or reference image).'); return; }
         stroke = { pts: [h.p.x, h.p.y, h.p.z], plane: null, normal: new THREE.Vector3(0, 1, 0), targetObj: h.obj, targetId: objIdOf(h.obj) };
         return;
       }
       const pl = activePlane();
       const p = planePoint(e, pl.plane);
-      if (!p) { r.orbit.enabled = true; return; }
+      if (!p) return;
       if (s.tool === 'bezier') {
-        if (e.detail >= 2 && bez.current.length >= 6) { finishBezier(); r.orbit.enabled = true; return; }
+        if (e.detail >= 2 && bez.current.length >= 6) { finishBezier(); return; }
         bez.current.push(p.x, p.y, p.z);
         showPreview(bez.current);
         force((x) => x + 1);
-        r.orbit.enabled = true;
         return;
       }
       stroke = { pts: [p.x, p.y, p.z], plane: pl.plane, normal: pl.normal, targetObj: null, targetId: null };
@@ -422,19 +442,29 @@ export default function Studio3D() {
       if (Math.hypot(p.x - stroke.pts[n - 3], p.y - stroke.pts[n - 2], p.z - stroke.pts[n - 1]) > minStep) { stroke.pts.push(p.x, p.y, p.z); showPreview(stroke.pts); }
     };
     const up = (e: PointerEvent) => {
+      pointers = Math.max(0, pointers - 1);
       if (painting) {
         painting = false;
-        r.orbit.enabled = true;
         update((s) => { for (const o of s.objects) { const c = paintCanvases.get(o.id); if (c) o.paint = c.toDataURL('image/png'); } });
         return;
       }
       if (stroke) { finishStroke(); return; }
-      r.orbit.enabled = true;
       // a click (not an orbit drag) on empty space clears the selection
       if (st.current.tool === 'select' && downAt && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 4) { setSel(null); setSelPt(null); }
       downAt = null;
     };
-    const cancelStroke = () => { stroke = null; bez.current = []; showPreview([]); r.orbit.enabled = true; force((x) => x + 1); };
+    const cancelStroke = () => { stroke = null; bez.current = []; painting = false; showPreview([]); force((x) => x + 1); };
+    // Shift + wheel pans (trackpad-friendly). OrbitControls owns plain wheel = zoom / pinch = zoom.
+    const wheel = (e: WheelEvent) => {
+      if (!e.shiftKey || e.ctrlKey) return;
+      e.preventDefault(); e.stopPropagation();
+      const k = cam().position.distanceTo(r.orbit.target) * 0.0012;
+      const right = new THREE.Vector3().setFromMatrixColumn(cam().matrix, 0);
+      const upv = new THREE.Vector3().setFromMatrixColumn(cam().matrix, 1);
+      const dx = (e.deltaX || 0) * k, dy = (e.deltaY || 0) * k;
+      r.orbit.target.addScaledVector(right, dx).addScaledVector(upv, -dy);
+      cam().position.addScaledVector(right, dx).addScaledVector(upv, -dy);
+    };
     const key = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
@@ -455,17 +485,20 @@ export default function Studio3D() {
       else if (k === 'f') view('focus');
       else if (k === 'v') setTool3('select');
       else if (k === 'b') setTool3('draw');
+      else if (k === 'c') setTool3('camera');
       else handled = false;
       if (handled) { e.preventDefault(); e.stopPropagation(); }
     };
-    const keyUp = (e: KeyboardEvent) => { if (e.key === 'Alt') { altHeld = false; (r.orbit.mouseButtons as Record<string, THREE.MOUSE | null>).LEFT = st.current.tool === 'select' ? THREE.MOUSE.ROTATE : null; } };
+    const keyUp = (e: KeyboardEvent) => { if (e.key === 'Alt') { altHeld = false; (r.orbit.mouseButtons as Record<string, THREE.MOUSE | null>).LEFT = isNavTool(st.current.tool) ? THREE.MOUSE.ROTATE : null; } };
+    const cancelled = () => { pointers = Math.max(0, pointers - 1); cancelStroke(); };
     el.addEventListener('pointerdown', down);
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', up);
-    el.addEventListener('pointercancel', cancelStroke);
+    el.addEventListener('pointercancel', cancelled);
+    el.parentElement?.addEventListener('wheel', wheel, { passive: false, capture: true });
     window.addEventListener('keydown', key, true); // capture: 3D undo/redo must not reach the 2D shortcut handler
     window.addEventListener('keyup', keyUp);
-    return () => { el.removeEventListener('pointerdown', down); el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', cancelStroke); window.removeEventListener('keydown', key, true); window.removeEventListener('keyup', keyUp); };
+    return () => { el.removeEventListener('pointerdown', down); el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); el.removeEventListener('pointercancel', cancelled); el.parentElement?.removeEventListener('wheel', wheel, { capture: true }); window.removeEventListener('keydown', key, true); window.removeEventListener('keyup', keyUp); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [webgl]);
 
@@ -570,6 +603,14 @@ export default function Studio3D() {
     new GLTFExporter().parse(root, (res) => { download(new Blob([res as ArrayBuffer], { type: 'model/gltf-binary' }), (activeDoc()?.name || 'scene') + '.glb'); toast('Exported GLB (glTF 2.0)', 'success'); }, (err) => toast('GLB export failed: ' + err, 'error'), { binary: true });
   };
   const setDraw = (p: Partial<Scene3D['draw']>, record = false) => update((s) => { s.draw = { ...s.draw, ...p }; }, record);
+  /** Camera perspective strength (field of view); saved with the scene like position and target. */
+  const setFov = (fov: number) => {
+    const r = R.current;
+    if (!r) return;
+    r.persp.fov = fov;
+    r.persp.updateProjectionMatrix();
+    if (!sceneRef.current.ortho) update((s) => { s.camera = { ...(s.camera || getView()), fov, ortho: false }; }, false);
+  };
   const setSym = (p: Partial<Scene3D['sym']>) => update((s) => { s.sym = { ...s.sym, ...p }; }, false);
   const symCount = symMatrices(scene.sym).length;
 
@@ -587,6 +628,7 @@ export default function Studio3D() {
   return (
     <div className="absolute inset-0 flex">
       <div className="flex w-12 flex-col items-center gap-1 border-r border-black/50 bg-[#161618] py-2" aria-label="3D tools">
+        {T('camera', Orbit, 'Camera / navigate (C): drag to orbit · wheel zoom · Shift+wheel or right-drag pan · touch: 1 finger orbit, 2 fingers pan & pinch')}
         {T('select', MousePointer2, 'Select & edit (V): click objects, strokes or control points. W/E/R = move/rotate/scale, F = focus, Delete = remove')}
         {T('draw', PenLine, 'Freehand stroke in space (B): draws on the active plane or on surfaces. [ / ] move the depth plane')}
         {T('bezier', Spline, 'Bézier curve: click anchors, then Enter or double-click to finish')}
@@ -599,10 +641,19 @@ export default function Studio3D() {
       <div className="relative min-w-0 flex-1">
         <div ref={host} className="absolute inset-0" />
         <div className="pointer-events-none absolute left-3 top-3 max-w-[70%] rounded bg-black/55 px-2 py-1 text-[11px] text-neutral-200">
-          <b className="text-[#E8913A]">{tool === 'select' ? 'Select' : tool === 'paint' ? 'Paint' : tool === 'bezier' ? 'Bézier' : tool === 'line' ? 'Line' : 'Freehand'}</b>
+          <b className={tool === 'camera' ? 'text-sky-300' : 'text-[#E8913A]'}>{tool === 'camera' ? 'Camera · navigate' : tool === 'select' ? 'Select' : tool === 'paint' ? 'Paint' : tool === 'bezier' ? 'Bézier' : tool === 'line' ? 'Line' : 'Freehand'}</b>
           {drawingTool && <> · {target === 'surface' ? 'on object surfaces' : `${PLANE_LABEL[scene.draw.mode]}, depth ${scene.draw.offset.toFixed(2)}`}{symCount > 1 && target === 'plane' ? ` · symmetry ×${symCount}` : ''}</>}
           {tool === 'bezier' && bez.current.length > 0 && ` · ${bez.current.length / 3} anchors`}
-          <span className="ml-2 text-neutral-400">Middle-drag orbit · Shift+middle pan · Right-drag pan · Wheel zoom{tool !== 'select' ? ' · Alt+left orbit' : ' · Left-drag empty space orbits'}</span>
+          {drawingTool && scene.ground !== false && target === 'plane' && scene.draw.mode === 'xz' && scene.draw.offset === 0 && ' · on the white ground'}
+          <span className="ml-2 text-neutral-400">
+            {touchDevice
+              ? (drawingTool && target === 'plane'
+                ? '1 finger draws · 2 fingers pan & pinch zoom · use the Camera tool to orbit with 1 finger'
+                : '1 finger orbits (Camera / Select) · 2 fingers pan & pinch zoom')
+              : tool === 'camera'
+                ? 'Drag orbit · Middle or right-drag pan · Wheel zoom · Shift+wheel pan'
+                : `Middle-drag orbit · Shift+middle pan · Right-drag pan · Wheel zoom${tool !== 'select' ? ' · Alt+left orbit' : ' · Left-drag empty space orbits'}`}
+          </span>
         </div>
         {panelEdit && panelEdit.sceneDoc === doc.meta.uuid && (
           <>
@@ -737,6 +788,20 @@ export default function Studio3D() {
             </div>
           ))}
           <div className="flex gap-2"><Toggle label="Grid" checked={scene.grid} onChange={(v) => update((s) => { s.grid = v; }, false)} /><Toggle label="Axes" checked={scene.axes} onChange={(v) => update((s) => { s.axes = v; }, false)} /></div>
+        </div>
+
+        <div className="space-y-1 border-t border-white/5 pt-2">
+          <S3>Environment · White Ground</S3>
+          <Toggle label="White ground plane" checked={scene.ground !== false} onChange={(v) => update((s) => { s.ground = v; })} />
+          {scene.ground !== false && (
+            <>
+              <div className="flex items-center gap-2 text-neutral-500">Ground color<input type="color" value={scene.groundColor || '#ffffff'} onChange={(e) => update((s) => { s.groundColor = e.target.value; }, false)} /></div>
+              <Toggle label="Subtle shadows on the ground" checked={!!scene.groundShadow} onChange={(v) => update((s) => { s.groundShadow = v; })} />
+              <p className="text-[10px] text-neutral-500">A flat, pure-white drawing surface. Shadows use a separate soft catcher, so the ground itself stays white.</p>
+            </>
+          )}
+          <Slider label="Grid spacing" value={scene.gridSize} min={0.05} max={2} step={0.05} fmt={(v) => v.toFixed(2)} onChange={(v) => update((s) => { s.gridSize = v; }, false)} />
+          <Slider label="Field of view" value={scene.camera?.fov || 45} min={18} max={95} step={1} fmt={(v) => v + '°'} onChange={setFov} />
         </div>
 
         <div className="space-y-1 border-t border-white/5 pt-2">

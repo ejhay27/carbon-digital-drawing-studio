@@ -11,6 +11,8 @@ export type ReleaseCategory = 'major' | 'feature' | 'patch';
 
 export interface Release {
   version: string;
+  /** Optional display suffix for this release identity, e.g. '+ls' (Local Storage). */
+  suffix?: string;
   title: string;
   date: string | null;
   category: ReleaseCategory;
@@ -23,6 +25,42 @@ export interface Release {
 }
 
 export const RELEASES: Release[] = [
+  {
+    version: '7.0.0',
+    suffix: '+ls',
+    title: 'Carbon: Prime',
+    date: '2026-10-11',
+    category: 'major',
+    summary: 'Carbon becomes Carbon: Prime 7.x+ls: a rebuilt home screen with a cinematic animated ocean, a true white-ground 3D drawing environment with direct camera control, and a repaired, verified build pipeline. Local Storage (+ls) remains the only storage: offline, no account, no cloud.',
+    features: [
+      'Carbon: Prime identity: consistent 7.0.0+ls release numbering across the app, About screen, release notes and packaging; the +ls suffix marks Local Storage builds. The Carbon name, mark and “Where all starts begin.” tagline are preserved.',
+      'New Prime home screen with a cinematic animated ocean: calm blue-and-teal water, gentle moving waves, sun glitter and a bright late-morning sky. The scene is procedural Canvas 2D, pauses when the window is hidden, honours reduced-motion preferences, falls back to a static sky/sea if graphics fail, and never delays access to the tools.',
+      'Every home destination is real: New Drawing, Open Project, Recent Projects, Import Artwork, Brush Studio, 3D Studio, Comics Studio, Carbon Library, Latest Patches, Settings and Help & About.',
+      '3D Studio: White Ground environment. New scenes start on a genuine, flat, pure-white ground plane with a neutral background and a perspective grid that extends across the workspace and responds correctly to camera movement.',
+      '3D Studio: dedicated Camera navigation tool. One-finger drag orbits on touch, two fingers pan, pinch zooms; mouse drag orbits in Camera mode, middle-drag pans, wheel zooms, Shift+wheel pans for trackpads. Drawing tools never move the camera by accident, and a mode indicator shows what input will do.',
+      '3D Studio: new empty-scene default — no decorative starter cube — plus environment controls for ground visibility, ground color, subtle shadow display, grid spacing and camera field of view.',
+      'Camera field of view (perspective strength) is adjustable and saved with the scene; existing saved views, camera reset and perspective/orthographic switching are unchanged.',
+    ],
+    improvements: [
+      'The 3D render-to-layer and comic panel captures render the same white ground as the viewport, so captures match what you see.',
+      'Legacy 2.0–2.2 scenes migrate to the white-ground environment automatically; their strokes, objects and camera stay exactly where they were.',
+      'npm scripts gained typecheck and test; the Node test suite (npm test) covers version identity, scene migration, curve math, brush presets, color math and comic layout.',
+    ],
+    fixes: [
+      'package.json was invalid JSON (a trailing comma), so npm install, the Electron packaging and every script failed before starting. The manifest is repaired and the build, typecheck and packaging scripts were verified.',
+      'A stray unused import made tsc --noEmit fail (the repo’s own strictness rule) — the build is now clean under the repository’s TypeScript settings.',
+      'The Windows packaging script now recognises “CARBON PRIME x.y.z” portable README files when archiving the previous build.',
+    ],
+    compatibility: [
+      'Still .carbon format v1: 2.0–2.2 projects, comics, brush packs, palettes and scenes open unchanged; new scene fields are optional extension data that older versions ignore.',
+      'The Android edition keeps its separate 1.0.0 version line, labels, configuration and build path — no Android file was modified in this release.',
+    ],
+    knownIssues: [
+      'Drawing Replay still does not record 3D Studio edits (3D has its own undo), and symmetry is not applied to strokes drawn on object surfaces — carried forward from 2.2.0.',
+      'Electron installers are produced by CI or on Windows; this source environment documents the exact commands instead of shipping unverified binaries.',
+      'Pressure, palm rejection and trackpad-gesture behaviour still need manual verification on physical hardware.',
+    ],
+  },
   {
     version: '2.2.0',
     title: 'Connected Creative Studio',

@@ -11,13 +11,13 @@ import { ReplayPlayer } from './replay';
 import { sampleCurve } from './strokeRenderer';
 import { canvasDiff, canvasToBlob, ctxOf, mulberry32 } from './util';
 import type { BlendMode } from './types';
-import { APP_LABEL, APP_VERSION, compareSemver, SEMVER, WINDOWS_VERSION } from '../version';
+import { APP_LABEL, APP_VERSION, compareSemver, LS_SUFFIX, SEMVER, WINDOWS_VERSION } from '../version';
 import { RELEASES } from '../release/releases';
 import { renderDoc } from './render';
 import { renderStroke } from './strokeRenderer';
 import { loadImage } from './util';
 import { getApp } from '../state/store';
-import { applyMat, renderSceneImage, sceneOf, simplify3, smooth3, symMatrices, webglAvailable } from '../win/sceneRender';
+import { applyMat, colorLuminance, defaultScene, makeGrid, renderSceneImage, sceneOf, simplify3, smooth3, symMatrices, webglAvailable } from '../win/sceneRender';
 import { fuseBrush } from '../win/BrushFusion';
 import { extractPalette } from '../win/PaletteMemory';
 import { boardOf, itemHealth } from '../win/OrbitBoard';
@@ -164,8 +164,9 @@ export async function winTests(test: T, assert: A) {
 
   await test('[Win] Version metadata is consistent (semver, release notes, file metadata)', async () => {
     assert(SEMVER.test(WINDOWS_VERSION), `WINDOWS_VERSION “${WINDOWS_VERSION}” is not MAJOR.MINOR.PATCH`);
-    assert(APP_VERSION === WINDOWS_VERSION && APP_LABEL === `CARBON ${WINDOWS_VERSION}`, 'running edition does not report WINDOWS_VERSION');
-    assert(RELEASES.length > 0 && RELEASES[0].version === WINDOWS_VERSION, `release notes start at ${RELEASES[0]?.version}, build is ${WINDOWS_VERSION}`);
+    assert(APP_VERSION === WINDOWS_VERSION + LS_SUFFIX && APP_LABEL === `CARBON PRIME ${WINDOWS_VERSION}${LS_SUFFIX}`, 'running edition does not report the PRIME WINDOWS_VERSION+ls identity');
+    assert(LS_SUFFIX === '+ls', 'release suffix must stay +ls (Local Storage)');
+    assert(RELEASES.length > 0 && RELEASES[0].version === WINDOWS_VERSION && RELEASES[0].suffix === LS_SUFFIX, `release notes start at ${RELEASES[0]?.version}${RELEASES[0]?.suffix || ''}, build is ${WINDOWS_VERSION}${LS_SUFFIX}`);
     const seen = new Set<string>();
     RELEASES.forEach((r, i) => {
       assert(SEMVER.test(r.version), `bad version ${r.version}`);
@@ -260,6 +261,18 @@ export async function winTests(test: T, assert: A) {
     const legacy = sceneOf({ version: 1, bg: '#000', ambient: 1, lights: [], objects: [], grid: true, axes: true, plane: 'xy', planeOffset: 0.5, symmetry: true, snap: false, gridSize: 0.25, ortho: false });
     assert(legacy.draw.mode === 'xy' && legacy.draw.offset === 0.5 && legacy.sym.mirror.x && Array.isArray(legacy.views), 'legacy 2.1 scene settings not migrated');
     return '6 symmetric copies, exact mirror, RDP 51→2 points, 2.1 scene migrated';
+  });
+
+  await test('[Win 7] Prime White Ground: default environment, migration and grid', () => {
+    const d = defaultScene();
+    assert(d.ground === true && d.groundColor === '#ffffff', 'new scenes must start on a pure-white ground plane');
+    assert(d.objects.length === 0, 'new scenes must not contain a decorative starter cube');
+    assert(d.grid && colorLuminance(d.bg) > 0.8, 'default background must be bright and neutral for the white ground');
+    const legacy = sceneOf({ version: 1, bg: '#26262b', ambient: 0.5, lights: [], objects: [{ id: 'k', kind: 'cube', pos: [0, 0.5, 0] }], grid: true, axes: true, gridSize: 0.25, snap: false, ortho: false, draw: { mode: 'xz', offset: 0, pos: [0, 0, 0], rot: [0, 0, 0] }, sym: { mirror: { x: false, y: false, z: false }, radial: 1, axis: 'y', center: [0, 0, 0] }, views: [] });
+    assert(legacy.ground === true && legacy.objects.length === 1 && legacy.objects[0].pos[0] === 0, 'legacy scenes migrate to the white ground without touching their objects');
+    const verts = (makeGrid(d).geometry.getAttribute('position') as { count: number }).count;
+    assert(verts > 0 && verts % 4 === 0, 'perspective grid builds from the scene spacing');
+    return `white-ground default, no starter cube, legacy migration safe, grid ${verts / 4} line pairs`;
   });
 
   await test('[Win 2.2] Spatial strokes, views and surface strokes persist in .carbon', async () => {

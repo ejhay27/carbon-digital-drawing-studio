@@ -27,6 +27,8 @@ export interface SavedView { id: string; name: string; view: CamView }
 export interface Scene3D {
   version: 1; bg: string; ambient: number; lights: Light[]; objects: Obj[]; grid: boolean; axes: boolean;
   gridSize: number; snap: boolean; ortho: boolean;
+  /** White Ground environment: a genuine flat ground plane (Prime 7 default). Optional fields so 2.0–2.2 scenes migrate. */
+  ground?: boolean; groundColor?: string; groundShadow?: boolean;
   draw: DrawPlane; sym: Sym; views: SavedView[]; camera?: CamView;
   // legacy 2.0/2.1 fields (read for migration)
   plane?: 'xz' | 'xy' | 'yz'; planeOffset?: number; symmetry?: boolean;
@@ -43,16 +45,18 @@ export const DEFAULT_VIEW: CamView = { pos: [4, 3.5, 5], target: [0, 0.5, 0], or
 
 export function defaultScene(): Scene3D {
   return {
-    version: 1, bg: '#26262b', ambient: 0.5, grid: true, axes: true, gridSize: 0.25, snap: false, ortho: false,
+    version: 1, bg: '#eef1f5', ambient: 0.75, grid: true, axes: false, gridSize: 0.25, snap: false, ortho: false,
+    ground: true, groundColor: '#ffffff', groundShadow: true,
     lights: [{ id: uid('lt'), type: 'dir', color: '#ffffff', intensity: 2.2, pos: [4, 7, 5], shadow: true }],
-    objects: [{ id: uid('o'), name: 'Cube', kind: 'cube', pos: [0, 0.5, 0], rot: [0, 0, 0], scale: [1, 1, 1], mat: { ...MAT_PRESETS.Clay }, visible: true }],
+    // Prime 7: scenes start empty on the white ground — no decorative starter cube.
+    objects: [],
     draw: { mode: 'view', offset: 0, pos: [0, 0, 0], rot: [0, 0, 0] },
     sym: { mirror: { x: false, y: false, z: false }, radial: 1, axis: 'y', center: [0, 0, 0] },
     views: [],
   };
 }
 
-/** Normalise / migrate scene JSON from any Carbon version (2.0, 2.1, 2.2). */
+/** Normalise / migrate scene JSON from any Carbon version (2.0, 2.1, 2.2, 7.x). */
 export function sceneOf(raw: unknown): Scene3D {
   const s = raw as Partial<Scene3D> | null;
   if (!s || s.version !== 1 || !Array.isArray(s.objects)) return defaultScene();
@@ -63,7 +67,70 @@ export function sceneOf(raw: unknown): Scene3D {
     draw: s.draw && typeof s.draw === 'object' ? { ...d.draw, ...s.draw } : { ...d.draw, mode: s.plane || 'xz', offset: s.planeOffset || 0 },
     sym: s.sym && typeof s.sym === 'object' ? { ...d.sym, ...s.sym, mirror: { ...d.sym.mirror, ...(s.sym.mirror || {}) } } : { ...d.sym, mirror: { x: !!s.symmetry, y: false, z: false } },
     views: Array.isArray(s.views) ? s.views : [],
+    // White Ground migration: scenes saved before Prime 7 gain the default ground environment.
+    ground: s.ground !== undefined ? !!s.ground : d.ground,
+    groundColor: typeof s.groundColor === 'string' ? s.groundColor : d.groundColor,
+    groundShadow: s.groundShadow !== undefined ? !!s.groundShadow : d.groundShadow,
   } as Scene3D;
+}
+
+// ---------------------------------------------------------------- white-ground environment
+/** Perceptual luminance of a hex color (0 = black, 1 = white). */
+export function colorLuminance(hex: string): number {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return 0.5;
+  const n = parseInt(m[1], 16);
+  const lin = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+    const c = v / 255;
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+}
+
+/** The ground plane sits just below y = 0 so strokes drawn on the XZ plane never z-fight with it. */
+export const GROUND_Y = -0.002;
+
+/**
+ * Build the White Ground environment: a flat, pure-white ground plane plus an optional
+ * subtle shadow catcher (a separate ShadowMaterial plane, so shadows darken softly while
+ * the ground itself stays pure white). Used by the viewport and the headless renderer.
+ */
+export function buildEnvironment(scene: Scene3D): THREE.Group {
+  const g = new THREE.Group();
+  g.name = 'environment';
+  const size = 160;
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(size, size).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: scene.groundColor || '#ffffff' }),
+  );
+  ground.position.y = GROUND_Y;
+  ground.renderOrder = -2;
+  ground.userData.env = true;
+  g.add(ground);
+  if (scene.groundShadow) {
+    const catcher = new THREE.Mesh(
+      new THREE.PlaneGeometry(size, size).rotateX(-Math.PI / 2),
+      new THREE.ShadowMaterial({ opacity: 0.13 }),
+    );
+    catcher.position.y = GROUND_Y + 0.001;
+    catcher.receiveShadow = true;
+    catcher.renderOrder = -1;
+    catcher.userData.env = true;
+    g.add(catcher);
+  }
+  return g;
+}
+
+/** Perspective grid for the workspace. Light scenes get dark lines, dark scenes get light lines. */
+export function makeGrid(scene: Scene3D): THREE.GridHelper {
+  const spacing = Math.max(0.05, Math.min(2, scene.gridSize || 0.25));
+  const size = 24;
+  const divisions = Math.max(8, Math.min(400, Math.round(size / spacing)));
+  const surfaceHex = scene.ground !== false ? (scene.groundColor || '#ffffff') : scene.bg;
+  const colors = colorLuminance(surfaceHex) > 0.5 ? [0x9aa3b2, 0xd4d9e2] : [0x55555f, 0x36363b];
+  const grid = new THREE.GridHelper(size, divisions, colors[0], colors[1]);
+  grid.name = 'grid';
+  return grid;
 }
 
 // ---------------------------------------------------------------- curve math
@@ -380,6 +447,9 @@ export async function renderSceneImage(scene: Scene3D, view: CamView, w: number,
   const ctx: BuildCtx = { assets: o.assets, paint: (ob) => paintCanvases.get(ob.id) || paints.get(ob.id) || null };
   const map = buildObjects(scene.objects, ctx);
   attachHierarchy(scene.objects, map, sc);
+  // White Ground: opaque captures include the environment exactly as the viewport shows it;
+  // transparent captures isolate the strokes (the ground plane would otherwise fill the frame).
+  if (scene.ground !== false && !o.transparent) sc.add(buildEnvironment(scene));
   r.setClearColor(0x000000, 0);
   r.render(sc, makeCamera(view, w / h));
   const url = r.domElement.toDataURL('image/png');
