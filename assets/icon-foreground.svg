@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- adaptive icon foreground: mark kept inside the 66% safe zone -->
+  <g transform="translate(240 240) scale(8.5)">
+    <path d="M54.5 28 V45 L32 58 L9.5 45 V19 L32 6 L43 12.4" fill="none" stroke="#E9E6DF" stroke-width="5.2" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M20.6 43.6 L48.2 16.2 Q51.6 13.4 50.6 17.6 L23.6 45.8 Q21 47.4 20.6 43.6 Z" fill="#E8913A"/>
+    <circle cx="21.4" cy="45" r="3.1" fill="#E8913A"/>
+  </g>
+</svg>

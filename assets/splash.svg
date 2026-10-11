@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2732" height="2732" viewBox="0 0 2732 2732">
+  <rect width="2732" height="2732" fill="#141416"/>
+  <g transform="translate(1110 980) scale(8)">
+    <path d="M54.5 28 V45 L32 58 L9.5 45 V19 L32 6 L43 12.4" fill="none" stroke="#E9E6DF" stroke-width="5.2" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M20.6 43.6 L48.2 16.2 Q51.6 13.4 50.6 17.6 L23.6 45.8 Q21 47.4 20.6 43.6 Z" fill="#E8913A"/>
+    <circle cx="21.4" cy="45" r="3.1" fill="#E8913A"/>
+  </g>
+  <text x="1366" y="1660" text-anchor="middle" font-family="Inter, 'DejaVu Sans', Arial, sans-serif" font-size="120" font-weight="600" letter-spacing="38" fill="#E9E6DF">CARBON</text>
+  <text x="1366" y="1760" text-anchor="middle" font-family="Inter, 'DejaVu Sans', Arial, sans-serif" font-size="52" fill="#8A8A90">Where all starts begin.</text>
+</svg>
