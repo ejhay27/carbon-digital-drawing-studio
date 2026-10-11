@@ -19,7 +19,7 @@ acceptance is claimed.
 - **Replay management:** My Illustrations is available from Home and File → My Illustrations while a document is open. Its recent-project and Android device-file cards open a project's Replay & recording panel. Per-document start/pause/resume/stop and separately confirmed delete-history controls remain distinct from artwork; stopping preserves history, and deleting history does not delete layers.
 - **Distinct exports:** `.carbon` saves/copies contain editable artwork plus native replay events. The image exporter writes flattened PNG/JPEG/WebP. Video export uses only the selected WebM/MP4 type returned by a supported MediaRecorder; it does not transcode or relabel.
 - **Limits:** older timelines whose pauses were already shortened cannot regain lost time. 3D Studio and Orbit Board edits are not in the 2D replay event stream. Recorder memory is estimated, not an exact archive-size measurement.
-- **Verification:** 319 Node assertions, strict TypeScript check, single-file Vite build, and whitespace validation pass (Vite 7.3.2; 2,056 modules; 2,023.64 kB / 697.78 kB gzip). Browser interaction, Windows installer/runtime, Android APK/device, QR image decode and actual video encoders remain unverified; see the audit report.
+- **Verification:** 319 Node assertions, strict TypeScript check, single-file Vite build, and whitespace validation pass (Vite 7.3.2; 2,056 modules; 2,023.79 kB / 697.82 kB gzip). Browser interaction, Windows installer/runtime, Android APK/device, QR image decode and actual video encoders remain unverified; see the audit report.
 
 ## Previous local source candidate — 7.5.1+ls
 

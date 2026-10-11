@@ -71,7 +71,7 @@ No cloud upload, screen recording, cursor/menu/idle capture, camera scanning/per
 |---|---|
 | `npm test` | **Pass — 319 assertions, 0 failures.** Includes replay clock/terminal samples/control lifecycle, asset validation, safe project replacement, About text, project-finder state and 3D surface geometry. |
 | `npm run typecheck` | **Pass — `tsc --noEmit`.** |
-| `npm run build` | **Pass — Vite 7.3.2; 2,056 modules; `dist/index.html` 2,023.64 kB (697.78 kB gzip).** |
+| `npm run build` | **Pass — Vite 7.3.2; 2,056 modules; `dist/index.html` 2,023.79 kB (697.82 kB gzip).** |
 | `git diff --check` | **Pass.** |
 | Browser UI / visual / actual pointer acceptance | **Not run.** |
 | Video encoder/codec and resulting media file | **Not run.** MediaRecorder support is platform-dependent. |
