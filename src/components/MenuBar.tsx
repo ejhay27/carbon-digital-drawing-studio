@@ -8,7 +8,6 @@ import { updateDock, useDock } from '../win/dockModel';
 import { WIN_PANELS } from '../state/store';
 import { addLayer, fitView, prettyCombo, rotateView, runAction } from '../state/commands';
 import { duplicateCurrent, exportBrushList, importBrushPack } from './Brushes';
-import { CarbonMark } from './Brand';
 import { uid } from '../engine/util';
 import { cn } from '../utils/cn';
 

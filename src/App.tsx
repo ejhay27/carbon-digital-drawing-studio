@@ -10,6 +10,7 @@ import FloatingPalette from './components/FloatingPalette';
 import Dock, { FloatingPanels } from './components/Dock';
 import Dialogs from './components/Dialogs';
 import Welcome from './components/Welcome';
+import Home from './components/Home';
 import { useReplayLoop } from './components/ReplayPanel';
 import { EDITION } from './platform/edition';
 import WinOverlay, { useWin } from './win/WinOverlay';
@@ -185,7 +186,7 @@ export default function App() {
                 </button>
               )}
             </>
-          ) : <Welcome />}
+          ) : EDITION.windows ? <Home /> : <Welcome />}
           {canvasOnly && (
             <button onClick={() => setApp({ canvasOnly: false })} className="absolute right-3 top-3 z-30 flex items-center gap-1 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1.5 text-[11px] text-neutral-300 backdrop-blur hover:text-white" title="Exit canvas-only mode (Tab / Esc)">
               <Minimize2 size={12} /> Exit focus

@@ -1,4 +1,19 @@
-# CARBON for Windows: version 2.2.0
+# CARBON for Windows
+
+## Current: Carbon: Prime 7.0.0+ls
+
+The Windows edition is now **Carbon: Prime 7.x+ls** (`+ls` = Local Storage). Highlights of
+7.0.0+ls: the Prime home screen with a cinematic animated ocean and real navigation to every
+studio; the **White Ground** 3D environment (flat pure-white plane, perspective grid, no
+starter cube, subtle-shadow catcher); a dedicated **Camera** navigation tool with touch
+(one-finger orbit / two-finger pan & pinch) and trackpad (Shift+wheel pan) support; Quick
+Color Pick from the screen via the Chromium EyeDropper API; and a repaired build pipeline
+(`package.json` was invalid JSON before this release). See
+[`PRIME-7.md`](./PRIME-7.md) for the full release document.
+
+---
+
+## Previous release: 2.2.0
 
 The Windows edition is the full connected studio: **Draw · Comic Studio · 3D Studio (Spatial Ink Lab) · Effects · Orbit Board · Brush Library**, plus Color Dock, Palette Memory, Continuum links and the Creative Time Machine.
 The Android edition is a separate 1.0.0 line. **No Android project file, configuration, asset, version field or artifact was modified.** Windows-only features are gated by `EDITION.windows` in shared code.
