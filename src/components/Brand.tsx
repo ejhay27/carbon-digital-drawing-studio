@@ -35,6 +35,26 @@ export function CarbonLockup({ size = 'lg' }: { size?: 'sm' | 'lg' }) {
   );
 }
 
+/** Carbon: Prime lockup — product name + PRIME edition badge + release identity. */
+export function PrimeLockup({ version, size = 'lg', light = false }: { version?: string; size?: 'sm' | 'lg'; light?: boolean }) {
+  const lg = size === 'lg';
+  return (
+    <div className="flex items-center gap-4">
+      <CarbonMark size={lg ? 72 : 36} />
+      <div>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <span className={`${lg ? 'text-4xl' : 'text-lg'} font-semibold tracking-[0.30em] ${light ? 'text-white' : 'text-[#E9E6DF]'}`} style={lg ? { textShadow: '0 2px 18px rgba(0,0,0,0.45)' } : undefined}>CARBON</span>
+          <span className={`${lg ? 'text-sm' : 'text-[9px]'} carbon-brand-accent font-semibold uppercase tracking-[0.42em] text-[#E8913A]`}>Prime</span>
+        </div>
+        <div className={`${lg ? 'mt-1.5 flex items-center gap-2.5' : 'text-[10px]'} tracking-wide ${light ? 'text-white/80' : 'text-neutral-400'}`}>
+          <span className={lg ? 'text-sm' : ''} style={lg ? { textShadow: '0 1px 10px rgba(0,0,0,0.5)' } : undefined}>Where all starts begin.</span>
+          {version && lg && <span className="rounded-full border border-white/25 bg-black/25 px-2.5 py-0.5 font-mono text-[11px] text-white/85 backdrop-blur-sm">{version}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Application icon (rounded tile) — used for favicon / install surfaces. */
 export function CarbonAppIcon({ size = 96 }: { size?: number }) {
   return (

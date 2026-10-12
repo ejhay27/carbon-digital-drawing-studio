@@ -76,7 +76,7 @@ export function SectionTitle({ children }: { children: ReactNode }) {
 export function Modal({ title, children, onClose, width = 480, footer }: { title: string; children: ReactNode; onClose: () => void; width?: number; footer?: ReactNode }) {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="flex max-h-[90vh] w-full flex-col overflow-hidden rounded-xl border border-white/10 bg-[#1c1c1f] shadow-2xl" style={{ maxWidth: width }}>
+      <div className="carbon-ui-popover flex max-h-[90vh] w-full flex-col overflow-hidden rounded-xl border border-white/10 bg-[#1c1c1f] shadow-2xl" style={{ maxWidth: width }}>
         <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
           <h2 className="text-sm font-semibold text-neutral-100">{title}</h2>
           <button onClick={onClose} className="rounded px-2 text-lg leading-none text-neutral-500 hover:text-white" aria-label="Close">×</button>

@@ -87,9 +87,10 @@ export async function branchFrom(doc: DocEngine, s: SnapMeta | null, name: strin
   d.meta.branch = name;
   d.name = `${doc.name} [${name}]`;
   d.fileName = null;
+  d.filePath = null;
   d.comic = null;
   d.dirty = true;
-  addDoc(d, false);
+  addDoc(d);
   return d;
 }
 

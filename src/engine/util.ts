@@ -149,15 +149,15 @@ export function canvasDiff(a: HTMLCanvasElement, b: HTMLCanvasElement, tol = 2) 
   return n;
 }
 
-type DownloadImpl = (blob: Blob, name: string) => void;
+type DownloadImpl = (blob: Blob, name: string) => void | boolean | Promise<void | boolean>;
 let downloadImpl: DownloadImpl | null = null;
-/** Platform adapters (e.g. Android) replace browser downloads with native file delivery. */
+/** Platform adapters (e.g. Electron and Android) replace browser downloads with native file delivery. */
 export function setDownloadImpl(f: DownloadImpl | null) {
   downloadImpl = f;
 }
 
-export function download(blob: Blob, name: string) {
-  if (downloadImpl) return downloadImpl(blob, name);
+export async function download(blob: Blob, name: string): Promise<boolean> {
+  if (downloadImpl) return (await downloadImpl(blob, name)) !== false;
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = name;
@@ -167,6 +167,7 @@ export function download(blob: Blob, name: string) {
     URL.revokeObjectURL(a.href);
     a.remove();
   }, 1500);
+  return true;
 }
 
 export function loadImage(src: string): Promise<HTMLImageElement> {

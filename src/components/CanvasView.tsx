@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import type { BrushParams, InkStroke, Rect, Symmetry } from '../engine/types';
 import { StrokeRenderer } from '../engine/strokeRenderer';
+import { appendRecordedSample } from '../engine/recording';
 import { renderDoc, samplePixel } from '../engine/render';
 import { splitForTransform, type DocEngine } from '../engine/document';
 import { eraseInk, hitInk, inkBounds, makeInkStroke, transformInk } from '../engine/crispInk';
 import { clamp, invM, mapPt, mulM, rgbToHex, uid, viewMatrix } from '../engine/util';
 import { activeDoc, currentBrush, getApp, setApp, setColor, toast, updateToolOpts, useApp, usePointer } from '../state/store';
 import { canvasBus, fitView, redo, rotateView, undo, viewChanged, viewport, zoomAt } from '../state/commands';
+import { onThemeChange, readThemeToken } from '../theme/themeTokens';
 
 type Inter =
   | { k: 'stroke'; r: StrokeRenderer; s: number[]; t0: number; layerId: string; brush: BrushParams; color: string; eraser: boolean; seed: number; sym: Symmetry }
@@ -209,12 +211,14 @@ export default function CanvasView() {
     const fh = () => flipTf('h');
     const fv = () => flipTf('v');
     canvasBus.addEventListener('view', invalidate);
+    const stopThemeListening = onThemeChange(invalidate);
     canvasBus.addEventListener('commit-transform', c);
     canvasBus.addEventListener('cancel-transform', x);
     canvasBus.addEventListener('flip-tf-h', fh);
     canvasBus.addEventListener('flip-tf-v', fv);
     return () => {
       canvasBus.removeEventListener('view', invalidate);
+      stopThemeListening();
       canvasBus.removeEventListener('commit-transform', c);
       canvasBus.removeEventListener('cancel-transform', x);
       canvasBus.removeEventListener('flip-tf-h', fh);
@@ -344,7 +348,7 @@ export default function CanvasView() {
     }
     if (tf.current && !tf.current.moveOnly) {
       const c = tfCorners().map(([x, y]) => S(x, y));
-      ctx.strokeStyle = '#4da3ff';
+      ctx.strokeStyle = readThemeToken('selection', '#4da3ff');
       ctx.lineWidth = 1.5;
       line(c.slice(0, 4), true);
       ctx.stroke();
@@ -355,7 +359,7 @@ export default function CanvasView() {
       const rot: [number, number] = [top[0] + (dx / dl) * 28, top[1] + (dy / dl) * 28];
       line([top, rot]);
       ctx.stroke();
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = readThemeToken('selectionText', '#fff');
       for (const [x, y] of c) { ctx.fillRect(x - 5, y - 5, 10, 10); ctx.strokeRect(x - 5, y - 5, 10, 10); }
       ctx.beginPath(); ctx.arc(rot[0], rot[1], 6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     }
@@ -363,13 +367,13 @@ export default function CanvasView() {
       const sel = new Set(s.inkSelection);
       for (const st of d.active.strokes || []) {
         if (!sel.has(st.id)) continue;
-        ctx.strokeStyle = '#4da3ff';
+        ctx.strokeStyle = readThemeToken('selection', '#4da3ff');
         ctx.lineWidth = 1;
         const sp: [number, number][] = [];
         for (let i = 0; i < st.pts.length; i += 3) sp.push(S(st.pts[i], st.pts[i + 1]));
         line(sp);
         ctx.stroke();
-        ctx.fillStyle = '#fff';
+        ctx.fillStyle = readThemeToken('selectionText', '#fff');
         for (const [x, y] of sp) { ctx.beginPath(); ctx.arc(x, y, 3.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
       }
     }
@@ -486,6 +490,12 @@ export default function CanvasView() {
     const [x, y] = toDoc(e.clientX - rect.left, e.clientY - rect.top);
     return [r2(x), r2(y), r2(pressureOf(e)), Math.round(e.tiltX || 0), Math.round(e.tiltY || 0), Math.max(0, Math.round(e.timeStamp - t0))];
   };
+  const captureTerminalSample = (it: Extract<Inter, { k: 'stroke' | 'ink' }>, e: PointerEvent) => {
+    const cv = cvRef.current;
+    if (!cv) return;
+    const sample = sampleFrom(e, it.t0, cv.getBoundingClientRect());
+    appendRecordedSample(it.s, sample, e.pointerType === 'pen' && e.pressure === 0);
+  };
 
   const commitStroke = () => {
     const it = inter.current;
@@ -507,6 +517,16 @@ export default function CanvasView() {
       }
     }
     invalidate();
+  };
+
+  const finishInterruptedStroke = (terminal?: PointerEvent) => {
+    const it = inter.current;
+    if (!it || (it.k !== 'stroke' && it.k !== 'ink')) return false;
+    if (terminal) captureTerminalSample(it, terminal);
+    inter.current = it;
+    commitStroke();
+    inter.current = null;
+    return true;
   };
 
   const abortInteraction = () => {
@@ -587,7 +607,7 @@ export default function CanvasView() {
     if (e.pointerType === 'touch') {
       touches.current.set(e.pointerId, { x: sx, y: sy });
       if (touches.current.size >= 2) {
-        abortInteraction();
+        if (!finishInterruptedStroke()) abortInteraction();
         const [a, b] = [...touches.current.values()];
         gesture.current = {
           d0: Math.hypot(b.x - a.x, b.y - a.y) || 1, a0: Math.atan2(b.y - a.y, b.x - a.x), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2,
@@ -754,10 +774,7 @@ export default function CanvasView() {
       case 'ink': {
         const evs = typeof ne.getCoalescedEvents === 'function' ? ne.getCoalescedEvents() : [];
         for (const ce of evs.length ? evs : [ne]) {
-          const smp = sampleFrom(ce, it.t0, rect);
-          const n = it.s.length;
-          if (n >= 6 && smp[5] < it.s[n - 1]) smp[5] = it.s[n - 1];
-          it.s.push(...smp);
+          appendRecordedSample(it.s, sampleFrom(ce, it.t0, rect));
         }
         if (it.k === 'stroke') it.r.feed(it.s, Infinity);
         else d.preview = { kind: 'ink', layerId: it.layerId, stroke: makeInkStroke(it.s, it.brush, it.color, it.mouse) };
@@ -902,6 +919,7 @@ export default function CanvasView() {
     }
     const it = inter.current;
     if (!d || !it) return;
+    if (it.k === 'stroke' || it.k === 'ink') captureTerminalSample(it, e.nativeEvent);
     inter.current = null;
     switch (it.k) {
       case 'stroke':
@@ -1058,7 +1076,7 @@ export default function CanvasView() {
           touches.current.delete(e.pointerId);
           if (!touches.current.size) gesture.current = null;
           activePtr.current = null;
-          abortInteraction();
+          if (!finishInterruptedStroke(e.nativeEvent)) abortInteraction();
         }}
         onPointerLeave={() => { hover.current = null; invalidate(); }}
         onWheel={onWheel}

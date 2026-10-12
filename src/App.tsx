@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { deliverFile, initNative, isNative, setImmersive } from './platform/native';
+import { desktopBridge } from './platform/electronBridge';
 import { setDownloadImpl } from './engine/util';
 import { setCanvasLimits } from './engine/document';
-import { Minimize2, PanelRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Minimize2, PanelRight } from 'lucide-react';
 import MenuBar from './components/MenuBar';
 import { ConfirmHost, DocTabs, StatusBar, Toasts, ToolRail } from './components/Chrome';
 import CanvasView from './components/CanvasView';
@@ -10,11 +11,14 @@ import FloatingPalette from './components/FloatingPalette';
 import Dock, { FloatingPanels } from './components/Dock';
 import Dialogs from './components/Dialogs';
 import Welcome from './components/Welcome';
+import Home from './components/Home';
 import { useReplayLoop } from './components/ReplayPanel';
 import { EDITION } from './platform/edition';
-import WinOverlay, { useWin } from './win/WinOverlay';
+import WinOverlay, { setWin, useWin } from './win/WinOverlay';
+import { documentWorkspace } from './win/workspaceModel';
 import { BrushMarket, ComicPanel, EffectsPanel, WorkspaceBar } from './win/WinPanels';
 import Studio3D from './win/Studio3D';
+import ProjectLibrary from './win/ProjectLibrary';
 import ColorDock, { effectiveDock } from './win/ColorDock';
 import { useDock } from './win/dockModel';
 import OrbitBoard, { boardAddFiles } from './win/OrbitBoard';
@@ -23,6 +27,7 @@ import { openComicFile } from './state/actions';
 import { activeDoc, getApp, setApp, toast, updateLayout, useApp } from './state/store';
 import { autosaveAll, closeReplay, importImageFile, openBytes, openImageAsDoc, restoreSession } from './state/actions';
 import { comboFromEvent, emitCanvas, runAction } from './state/commands';
+import { ThemeSync } from './theme/themeStore';
 
 function useTabletMode() {
   const mode = useApp((s) => s.settings.uiMode);
@@ -38,6 +43,8 @@ function useTabletMode() {
 
 export default function App() {
   const docs = useApp((s) => s.docs);
+  const activeId = useApp((s) => s.activeId);
+  const homeScreen = useApp((s) => s.homeScreen);
   const canvasOnly = useApp((s) => s.canvasOnly);
   const layout = useApp((s) => s.layout);
   const uiScale = useApp((s) => s.settings.uiScale);
@@ -45,6 +52,14 @@ export default function App() {
   const tablet = useTabletMode();
   const workspace = useWin((s) => s.workspace);
   const dockCfg = useDock((s) => s.cfg); // Color Dock settings (Windows)
+  // A document tab owns its studio type; switching tabs never reuses a Comic/3D document as a Draw canvas.
+  useEffect(() => {
+    const doc = getApp().docs.find((item) => item.id === activeId);
+    if (!doc) return;
+    const target = documentWorkspace(doc);
+    if (target !== 'comic' && getApp().tool === 'comic') setApp({ tool: 'brush' });
+    if (useWin.getState().workspace !== target) setWin({ workspace: target });
+  }, [activeId]);
   // Windows 2.2.0: add the new panels to an existing saved layout once (collapsed); never runs on Android
   useEffect(() => {
     if (!EDITION.windows || localStorage.getItem('carbon-win-panels-220')) return;
@@ -90,6 +105,21 @@ export default function App() {
           return false; // minimise; work is autosaved and restored on next launch
         },
       });
+    } else if (EDITION.windows && EDITION.electron) {
+      const bridge = desktopBridge();
+      if (bridge) {
+        setDownloadImpl((blob, name) => blob.arrayBuffer()
+          .then((bytes) => bridge.saveExport({ name, bytes }))
+          .then((result) => {
+            if (result.canceled) { toast('Export cancelled. No file was written.', 'info'); return false; }
+            toast(`Exported ${result.name} · ${result.path}`, 'success');
+            return true;
+          })
+          .catch((error) => {
+            toast(`Export failed: ${error instanceof Error ? error.message : error}. The source artwork was not changed.`, 'error');
+            return false;
+          }));
+      }
     }
     if (getApp().settings.restoreSession) restoreSession();
   }, []);
@@ -147,7 +177,8 @@ export default function App() {
     }
   };
 
-  const showChrome = !canvasOnly;
+  const homeVisible = homeScreen || (docs.length === 0 && !(EDITION.windows && workspace === 'projects'));
+  const showChrome = !canvasOnly && !homeVisible;
   // Color Dock (Windows): only where a 2D canvas is visible; lives beside/below <main>, never over the artwork
   const showDock = EDITION.windows && showChrome && docs.length > 0 && dockCfg.enabled && (workspace === 'draw' || workspace === 'comic' || workspace === 'effects');
   const dockCol = showDock && effectiveDock(dockCfg, { w: winW, h: winH }).placement === 'bottom';
@@ -158,11 +189,12 @@ export default function App() {
       onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
       onDrop={onDrop}
     >
+      {EDITION.windows && <ThemeSync />}
       {showChrome && (
         <div style={{ zoom }}>
           <MenuBar />
           {EDITION.windows ? (
-            <div className="flex items-center gap-2 border-b border-black/60 bg-[#111113] pr-2">
+            <div className="carbon-ui-toolbar flex items-center gap-2 border-b border-black/60 bg-[#111113] pr-2">
               <div className="min-w-0 flex-1"><DocTabs /></div>
               <WorkspaceBar />
             </div>
@@ -170,22 +202,22 @@ export default function App() {
         </div>
       )}
       <div className="relative flex min-h-0 flex-1">
-        {showChrome && layout.railVisible && docs.length > 0 && !(EDITION.windows && (workspace === '3d' || workspace === 'library' || workspace === 'board')) && <div className="flex" style={{ zoom }}><ToolRail tablet={tablet} /></div>}
+        {showChrome && layout.railVisible && docs.length > 0 && !(EDITION.windows && (workspace === '3d' || workspace === 'library' || workspace === 'projects' || workspace === 'board')) && <div className="flex" style={{ zoom }}><ToolRail tablet={tablet} /></div>}
         <div className={dockCol ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'flex min-h-0 min-w-0 flex-1 flex-row'}>
         {showDock && <ColorDock side="start" />}
-        <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-          {EDITION.windows && workspace === 'library' ? <BrushMarket /> : EDITION.windows && workspace === '3d' && docs.length > 0 ? <Studio3D /> : EDITION.windows && workspace === 'board' && docs.length > 0 ? <OrbitBoard /> : docs.length > 0 ? (
+        <main className="carbon-ui-canvas-surround relative min-h-0 min-w-0 flex-1 overflow-hidden">
+          {homeVisible ? (EDITION.windows ? <Home /> : <Welcome />) : EDITION.windows && workspace === 'projects' ? <ProjectLibrary /> : EDITION.windows && workspace === 'library' ? <BrushMarket /> : EDITION.windows && workspace === '3d' && docs.length > 0 ? <Studio3D /> : EDITION.windows && workspace === 'board' && docs.length > 0 ? <OrbitBoard /> : docs.length > 0 ? (
             <>
               <CanvasView />
               {EDITION.windows && <WinOverlay />}
               <FloatingPalette />
-              {tablet && showChrome && !layout.dockOpen && (
+              {tablet && showChrome && !EDITION.windows && !layout.dockOpen && (
                 <button onClick={() => updateLayout({ dockOpen: true })} className="absolute right-3 top-3 z-20 rounded-full border border-white/10 bg-neutral-900/90 p-2.5 text-neutral-200 shadow-xl" title="Open studio panels">
                   <PanelRight size={20} />
                 </button>
               )}
             </>
-          ) : <Welcome />}
+          ) : null}
           {canvasOnly && (
             <button onClick={() => setApp({ canvasOnly: false })} className="absolute right-3 top-3 z-30 flex items-center gap-1 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1.5 text-[11px] text-neutral-300 backdrop-blur hover:text-white" title="Exit canvas-only mode (Tab / Esc)">
               <Minimize2 size={12} /> Exit focus
@@ -200,10 +232,22 @@ export default function App() {
             {workspace === 'comic' ? <ComicPanel /> : <EffectsPanel />}
           </aside>
         )}
-        {showChrome && docs.length > 0 && !(EDITION.windows && (workspace === '3d' || workspace === 'library' || workspace === 'board')) && <div className="flex" style={{ zoom }}><Dock tablet={tablet} /></div>}
+        {showChrome && docs.length > 0 && !(EDITION.windows && (workspace === '3d' || workspace === 'library' || workspace === 'projects' || workspace === 'board')) && <div className="flex" style={{ zoom }}><Dock tablet={tablet} /></div>}
+        {showChrome && EDITION.windows && docs.length > 0 && (workspace === 'draw' || workspace === 'comic' || workspace === 'effects') && (
+          <button
+            onClick={() => updateLayout({ dockOpen: !layout.dockOpen })}
+            aria-label={layout.dockOpen ? 'Collapse right panel' : 'Expand right panel'}
+            aria-expanded={layout.dockOpen}
+            title={layout.dockOpen ? 'Collapse right panel' : 'Expand right panel'}
+            className="absolute top-1/2 z-40 flex h-9 w-6 -translate-y-1/2 items-center justify-center rounded-l-md border border-white/10 bg-[#202023] text-neutral-300 shadow-lg hover:bg-[#303035] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#E8913A]"
+            style={{ right: layout.dockOpen ? (tablet ? Math.min(layout.dockWidth + 40, winW - 80) : layout.dockWidth) * zoom - 12 : 0 }}
+          >
+            {layout.dockOpen ? <ChevronRight size={16} aria-hidden="true" /> : <ChevronLeft size={16} aria-hidden="true" />}
+          </button>
+        )}
       </div>
-      {showChrome && <div style={{ zoom }}><StatusBar tablet={tablet} /></div>}
-      {showChrome && <FloatingPanels />}
+      {showChrome && !(EDITION.windows && workspace === 'projects') && docs.length > 0 && <div style={{ zoom }}><StatusBar tablet={tablet} /></div>}
+      {showChrome && !(EDITION.windows && workspace === 'projects') && <FloatingPanels />}
       <Dialogs />
       <ConfirmHost />
       <Toasts />

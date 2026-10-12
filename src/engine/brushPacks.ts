@@ -1,5 +1,5 @@
 // CARBON Brush Market: local catalog, Windows core presets and safe pack import.
-// The catalog ships inside the app (works offline). There is no online brush service; packs are pure JSON data.
+// Bundled packs are always offline-ready. No remote endpoint is configured by default; imported packs remain pure JSON data.
 import type { BrushParams, TipShape, GrainType, BrushMode } from './types';
 import { BASE, brushFingerprint, ENGINE_VERSION } from './brushes';
 
@@ -54,7 +54,7 @@ export function winCorePresets(): BrushParams[] {
 }
 
 // ---------------------------------------------------------------- catalog packs
-export interface PackDef { id: string; name: string; category: string; version: number; description: string; brushes: () => BrushParams[] }
+export interface PackDef { id: string; name: string; category: string; version: number; description: string; featured?: boolean; creator?: string; license?: string; brushes: () => BrushParams[] }
 
 type Recipe = { name: string; o: Core };
 function family(packId: string, category: string, bases: Recipe[], mods: Recipe[], tag: string): BrushParams[] {
@@ -71,9 +71,9 @@ const R = (name: string, o: Core): Recipe => ({ name, o });
 const grains: GrainType[] = ['paper', 'rough', 'canvas', 'fabric', 'noise'];
 
 export const CATALOG: PackDef[] = [
-  { id: 'sketch', name: 'Sketching Essentials', category: 'Sketching', version: 1, description: 'Loose gesture tools for thumbnails and roughs.', brushes: () => family('sketch', 'Sketching', [R('Gesture Graphite', { tip: 'pencil', size: 6, flow: 0.8, grain: 0.5 }), R('Blue Line', { tip: 'pencil', size: 4, flow: 0.4, opacity: 0.6, grain: 0.4 }), R('Rough Liner', { tip: 'chalk', size: 5, scatter: 0.12, angleJitter: 1 }), R('Felt Sketch', { hardness: 0.7, size: 5, composite: 'multiply', opacity: 0.8 })], [R('Smooth paper', { grain: 0.15, grainType: 'paper' }), R('Cold press', { grainType: 'rough', grain: 0.6 }), R('Stabilised', { smoothing: 0.65 }), R('Fast taper', { taperStart: 0.8, speedSize: 0.5 }), R('Broad', { size: 2, pressureSize: 0.4 })], 'sketch') },
-  { id: 'pencil', name: 'Graphite Atelier', category: 'Pencil', version: 1, description: 'Graphite on many papers, from drafting to shading.', brushes: () => family('pencil', 'Pencil', [R('Graphite Lead', { tip: 'pencil', size: 5, flow: 0.8 }), R('Carbon Lead', { tip: 'charcoal', size: 6, flow: 0.95 }), R('Wax Colored', { tip: 'pencil', size: 6, flow: 0.7, valJitter: 0.04 }), R('Woodless Graphite', { tip: 'grain', size: 12, hardness: 0.5 })], [R('Bristol', { grain: 0.2 }), R('Cartridge', { grain: 0.5, grainType: 'paper' }), R('Toothy', { grain: 0.75, grainType: 'rough' }), R('Tilt shader', { tiltSize: 3, tiltAngle: true, pressureOpacity: 0.9 }), R('Pressure dark', { pressureOpacity: 1, pressureSize: 0.2 }), R('Canvas board', { grain: 0.5, grainType: 'canvas' })], 'pencil') },
-  { id: 'ink', name: 'Ink & Nib', category: 'Ink', version: 1, description: 'Nibs, brushes and technical pens for line art.', brushes: () => family('ink', 'Ink', [R('Round Nib', { hardness: 1, size: 6, minSize: 0.08 }), R('Chisel Nib', { tip: 'flat', hardness: 1, size: 10, angle: 40 }), R('Sable Brush', { size: 12, minSize: 0.05, taperStart: 1 }), R('Tech Pen', { hardness: 1, size: 3, pressureSize: 0 })], [R('Clean', { smoothing: 0.55 }), R('Dry drag', { grain: 0.45, grainType: 'rough' }), R('Speed thin', { speedSize: 0.6 }), R('Heavy', { size: 1.8 }), R('Splotchy', { tip: 'sponge', spacing: 0.12 }), R('Taper in', { taperStart: 1.2 })], 'ink') },
+  { id: 'sketch', name: 'Sketching Essentials', category: 'Sketching', version: 1, description: 'Loose gesture tools for thumbnails and roughs.', featured: true, brushes: () => family('sketch', 'Sketching', [R('Gesture Graphite', { tip: 'pencil', size: 6, flow: 0.8, grain: 0.5 }), R('Blue Line', { tip: 'pencil', size: 4, flow: 0.4, opacity: 0.6, grain: 0.4 }), R('Rough Liner', { tip: 'chalk', size: 5, scatter: 0.12, angleJitter: 1 }), R('Felt Sketch', { hardness: 0.7, size: 5, composite: 'multiply', opacity: 0.8 })], [R('Smooth paper', { grain: 0.15, grainType: 'paper' }), R('Cold press', { grainType: 'rough', grain: 0.6 }), R('Stabilised', { smoothing: 0.65 }), R('Fast taper', { taperStart: 0.8, speedSize: 0.5 }), R('Broad', { size: 2, pressureSize: 0.4 })], 'sketch') },
+  { id: 'pencil', name: 'Graphite Atelier', category: 'Pencil', version: 1, description: 'Graphite on many papers, from drafting to shading.', featured: true, brushes: () => family('pencil', 'Pencil', [R('Graphite Lead', { tip: 'pencil', size: 5, flow: 0.8 }), R('Carbon Lead', { tip: 'charcoal', size: 6, flow: 0.95 }), R('Wax Colored', { tip: 'pencil', size: 6, flow: 0.7, valJitter: 0.04 }), R('Woodless Graphite', { tip: 'grain', size: 12, hardness: 0.5 })], [R('Bristol', { grain: 0.2 }), R('Cartridge', { grain: 0.5, grainType: 'paper' }), R('Toothy', { grain: 0.75, grainType: 'rough' }), R('Tilt shader', { tiltSize: 3, tiltAngle: true, pressureOpacity: 0.9 }), R('Pressure dark', { pressureOpacity: 1, pressureSize: 0.2 }), R('Canvas board', { grain: 0.5, grainType: 'canvas' })], 'pencil') },
+  { id: 'ink', name: 'Ink & Nib', category: 'Ink', version: 1, description: 'Nibs, brushes and technical pens for line art.', featured: true, brushes: () => family('ink', 'Ink', [R('Round Nib', { hardness: 1, size: 6, minSize: 0.08 }), R('Chisel Nib', { tip: 'flat', hardness: 1, size: 10, angle: 40 }), R('Sable Brush', { size: 12, minSize: 0.05, taperStart: 1 }), R('Tech Pen', { hardness: 1, size: 3, pressureSize: 0 })], [R('Clean', { smoothing: 0.55 }), R('Dry drag', { grain: 0.45, grainType: 'rough' }), R('Speed thin', { speedSize: 0.6 }), R('Heavy', { size: 1.8 }), R('Splotchy', { tip: 'sponge', spacing: 0.12 }), R('Taper in', { taperStart: 1.2 })], 'ink') },
   { id: 'paint', name: 'Studio Paint', category: 'Painting', version: 1, description: 'Bristle, flat and round painting tools.', brushes: () => family('paint', 'Painting', [R('Hog Round', { tip: 'bristle', size: 28, followDirection: true }), R('Synthetic Flat', { tip: 'flat', size: 30, followDirection: true, hardness: 0.9 }), R('Filbert', { tip: 'flat', size: 26, hardness: 0.55, followDirection: true }), R('Fan', { tip: 'hair', size: 40, followDirection: true, flow: 0.7 })], [R('Opaque', { flow: 1 }), R('Mixing', { mode: 'mix', pickup: 0.4, wetness: 0.5 }), R('Dry', { grain: 0.6, grainType: 'canvas', flow: 0.7 }), R('Glaze', { opacity: 0.4, flow: 0.4, composite: 'multiply' }), R('Loaded', { size: 1.5, pressureSize: 0.6 })], 'paint') },
   { id: 'water', name: 'Watercolor Garden', category: 'Watercolor', version: 1, description: 'Washes, blooms and granulating pigments.', brushes: () => family('water', 'Watercolor', [R('Round Wash', { mode: 'wash', hardness: 0.3, size: 40, flow: 0.18, opacity: 0.55 }), R('Mop', { mode: 'wash', hardness: 0.05, size: 90, flow: 0.08, opacity: 0.45 }), R('Rigger', { mode: 'wash', hardness: 0.75, size: 6, flow: 0.4 }), R('Dry Pigment', { mode: 'wash', tip: 'grain', size: 30, flow: 0.3 })], [R('Wet edges', { wetEdges: 0.8 }), R('Blooms', { bloom: 0.8, wetEdges: 0.4 }), R('Granulating', { granulation: 0.75 }), R('Rough paper', { grain: 0.5, grainType: 'rough' }), R('Soft', { wetEdges: 0.15 }), R('Salt', { bloom: 0.5, granulation: 0.4 })], 'watercolor') },
   { id: 'oil', name: 'Oil Masters', category: 'Oil', version: 1, description: 'Buttery mixing oils and impasto knives.', brushes: () => family('oil', 'Oil', [R('Oil Round', { mode: 'mix', size: 26, hardness: 0.75 }), R('Oil Bristle', { mode: 'mix', tip: 'bristle', size: 32, followDirection: true }), R('Knife', { mode: 'mix', tip: 'square', roundness: 0.2, size: 40, angle: 90, followDirection: true, hardness: 1 }), R('Soft Sable Oil', { mode: 'mix', hardness: 0.3, size: 36 })], [R('Fat', { pickup: 0.2, wetness: 0.35 }), R('Lean', { pickup: 0.55, wetness: 0.7, flow: 0.7 }), R('Impasto', { grain: 0.35, grainType: 'canvas' }), R('Scumble', { flow: 0.5, grain: 0.5, grainType: 'rough' }), R('Blender', { mode: 'smudge', pickup: 0.7, wetness: 0.8 })], 'oil') },
@@ -98,7 +98,7 @@ function memo<T>(f: () => T): () => T {
 }
 
 // ---------------------------------------------------------------- installed-pack registry
-export interface InstalledPack { id: string; name: string; version: number; source: 'catalog' | 'import'; category: string; brushes?: BrushParams[] }
+export interface InstalledPack { id: string; name: string; version: number; source: 'catalog' | 'import' | 'remote'; category: string; brushes?: BrushParams[]; missing?: boolean }
 let installed: InstalledPack[] = [];
 const winCoreMemo = memo(() => winCorePresets());
 let cache: BrushParams[] | null = null;
@@ -107,8 +107,8 @@ export function setInstalledPacks(list: InstalledPack[]) {
   installed = list;
   const out = [...winCoreMemo()];
   for (const p of list) {
-    if (p.source === 'catalog') { const d = CATALOG.find((c) => c.id === p.id); if (d) out.push(...d.brushes()); }
-    else if (p.brushes) out.push(...p.brushes);
+    if (p.brushes && !p.missing) out.push(...p.brushes);
+    else if (p.source === 'catalog') { const d = CATALOG.find((c) => c.id === p.id); if (d) out.push(...d.brushes()); }
   }
   cache = out;
 }
@@ -116,26 +116,59 @@ export function setInstalledPacks(list: InstalledPack[]) {
 export function extraBrushes(enabled: boolean): BrushParams[] { return enabled ? cache || winCoreMemo() : []; }
 export const installedPacks = () => installed;
 
+/** Remove one imported brush while preserving the rest of its installed pack. Null means the pack is now empty. */
+export function withoutInstalledPackBrush(pack: InstalledPack, brushId: string): InstalledPack | null {
+  if (pack.source === 'catalog') throw new Error('Bundled catalog brushes cannot be removed individually.');
+  if (!pack.brushes?.some((brush) => brush.id === brushId)) throw new Error('This brush is not in the selected imported pack.');
+  const brushes = pack.brushes.filter((brush) => brush.id !== brushId);
+  return brushes.length ? { ...pack, brushes } : null;
+}
+
 // ---------------------------------------------------------------- safe import
 const TIPS: TipShape[] = ['round', 'square', 'grain', 'pencil', 'chalk', 'charcoal', 'bristle', 'flat', 'splatter', 'star', 'leaf', 'cloud', 'fabric', 'dots', 'sponge', 'hatch', 'stamp', 'grass', 'hair', 'flower', 'drop', 'snow', 'flame', 'brick', 'wood', 'scratch', 'rock', 'window', 'ornament'];
 const MODES: BrushMode[] = ['normal', 'wash', 'smudge', 'mix', 'crisp'];
 const NUM_KEYS = Object.keys(BASE).filter((k) => typeof (BASE as unknown as Record<string, unknown>)[k] === 'number');
+function validStampDataUrl(value: string): boolean {
+  const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if (!match || match[2].length >= 400_000 || match[2].length % 4 !== 0) return false;
+  try {
+    const bytes = Uint8Array.from(atob(match[2]), (char) => char.charCodeAt(0));
+    if (bytes.length < 12 || bytes.length > 300_000) return false;
+    if (match[1] === 'png') return bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a;
+    if (match[1] === 'jpeg') return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    return String.fromCharCode(...bytes.subarray(0, 4)) === 'RIFF' && String.fromCharCode(...bytes.subarray(8, 12)) === 'WEBP';
+  } catch { return false; }
+}
+export const DEFAULT_MAX_BRUSH_PACK_BYTES = 100 * 1024 * 1024;
+export const MAX_BRUSH_PACK_BYTES = 512 * 1024 * 1024;
 
-/** Validate a .carbonpack / .carbonbrush file: JSON data only, numeric ranges clamped, stamps must be small PNG/JPEG data URLs. */
-export function parsePack(text: string, existing: BrushParams[]): { pack: InstalledPack; duplicates: number; warnings: string[] } {
-  if (text.length > 20 * 1024 * 1024) throw new Error('Pack is larger than 20 MB.');
-  let data: { format?: string; id?: string; name?: string; version?: number; category?: string; brushes?: unknown[] };
+/** Validate a .carbonpack / .carbonbrush file: JSON data only, bounded UTF-8 size/count, numeric ranges clamped, stamps must be small image data URLs. */
+export function parsePack(text: string, existing: BrushParams[], maxBytes = DEFAULT_MAX_BRUSH_PACK_BYTES): { pack: InstalledPack; duplicates: number; warnings: string[] } {
+  const limit = Number.isFinite(maxBytes) ? Math.max(1, Math.floor(maxBytes)) : DEFAULT_MAX_BRUSH_PACK_BYTES;
+  if (new TextEncoder().encode(text).byteLength > limit) throw new Error(`Pack exceeds the ${Math.round(limit / (1024 * 1024))} MB import limit.`);
+  let data: { format?: string; id?: string; name?: string; version?: number; engine?: unknown; category?: string; brushes?: unknown[] };
   try { data = JSON.parse(text); } catch { throw new Error('File is not valid JSON.'); }
   if (!data || (data.format !== 'carbon-brushpack' && data.format !== 'carbon-brushes') || !Array.isArray(data.brushes)) throw new Error('Not a CARBON brush pack.');
+  if (data.engine !== undefined && Number(data.engine) !== ENGINE_VERSION) throw new Error(`Pack requires brush engine v${String(data.engine)}; this app supports v${ENGINE_VERSION}.`);
   if (data.brushes.length > 2000) throw new Error('Pack contains more than 2000 brushes.');
   const fps = new Set(existing.map(brushFingerprint));
   const warnings: string[] = [];
   let duplicates = 0;
-  const packId = String(data.id || 'import-' + Date.now().toString(36)).replace(/[^a-z0-9-]/gi, '').slice(0, 40) || 'import';
+  const rawPackId = String(data.id || 'import-' + Date.now().toString(36)).replace(/[^a-z0-9._-]/gi, '').slice(0, 80) || 'import';
+  // Imported packs are namespaced once. Re-export/reload keeps the same namespace and brush IDs.
+  const packId = rawPackId.replace(/^imp-/i, '') || 'import';
   const brushes: BrushParams[] = [];
+  const seenBrushIds = new Set<string>();
+  const existingIds = new Set(existing.map((brush) => brush.id));
   data.brushes.forEach((raw0, i) => {
     const raw = (raw0 || {}) as Record<string, unknown>;
-    const b: BrushParams = { ...BASE, id: `ip-${packId}-${i}`, name: String(raw.name || `Brush ${i + 1}`).slice(0, 60), category: String(raw.category || data.category || 'Imported').slice(0, 40), tags: Array.isArray(raw.tags) ? raw.tags.map(String).slice(0, 12) : ['imported'], description: String(raw.description || '').slice(0, 300), builtin: false };
+    const candidateId = typeof raw.id === 'string' && /^ip-[a-z0-9._-]{1,120}$/i.test(raw.id) && !existingIds.has(raw.id) ? raw.id : '';
+    let brushId = candidateId || `ip-${packId}-${i}`;
+    let collision = 0;
+    while (seenBrushIds.has(brushId) || existingIds.has(brushId)) brushId = `ip-${packId}-${i}-${++collision}`;
+    seenBrushIds.add(brushId);
+    const sourceTags = Array.isArray(raw.tags) ? raw.tags.map(String).map((tag) => tag.slice(0, 40)).slice(0, 11) : [];
+    const b: BrushParams = { ...BASE, id: brushId, name: String(raw.name || `Brush ${i + 1}`).slice(0, 60), category: String(raw.category || data.category || 'Imported').slice(0, 40), tags: [...new Set([...sourceTags, 'imported'])].slice(0, 12), description: String(raw.description || '').slice(0, 300), builtin: false };
     for (const k of NUM_KEYS) {
       const v = Number(raw[k]);
       if (Number.isFinite(v)) (b as unknown as Record<string, number>)[k] = Math.max(-360, Math.min(1000, v));
@@ -148,8 +181,8 @@ export function parsePack(text: string, existing: BrushParams[]): { pack: Instal
     b.tiltAngle = !!raw.tiltAngle;
     b.size = Math.max(0.5, Math.min(b.maxSize || 500, b.size));
     if (typeof raw.stamp === 'string') {
-      if (/^data:image\/(png|jpeg|webp);base64,/.test(raw.stamp) && raw.stamp.length < 400_000) b.stamp = raw.stamp;
-      else warnings.push(`“${b.name}”: stamp rejected (must be a PNG/JPEG/WebP data URL under 300 KB).`);
+      if (validStampDataUrl(raw.stamp)) b.stamp = raw.stamp;
+      else warnings.push(`“${b.name}”: stamp rejected (must be a valid PNG/JPEG/WebP image under 300 KB).`);
     }
     if (b.tip === 'stamp' && !b.stamp) { b.tip = 'round'; warnings.push(`“${b.name}”: missing stamp image, using a round tip.`); }
     const fp = brushFingerprint(b);
@@ -161,6 +194,7 @@ export function parsePack(text: string, existing: BrushParams[]): { pack: Instal
   return { pack: { id: 'imp-' + packId, name: String(data.name || 'Imported pack').slice(0, 60), version: Number(data.version) || 1, source: 'import', category: String(data.category || 'Imported'), brushes }, duplicates, warnings };
 }
 
-export function exportPack(name: string, brushes: BrushParams[]) {
-  return JSON.stringify({ format: 'carbon-brushpack', id: name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name, version: 1, engine: ENGINE_VERSION, brushes: brushes.map(({ builtin: _b, ...r }) => r) }, null, 1);
+export function exportPack(name: string, brushes: BrushParams[], packId = name, category = 'Imported', version = 1) {
+  const id = String(packId).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'brush-pack';
+  return JSON.stringify({ format: 'carbon-brushpack', id, name, category, version, engine: ENGINE_VERSION, brushes: brushes.map(({ builtin: _b, ...r }) => r) }, null, 1);
 }

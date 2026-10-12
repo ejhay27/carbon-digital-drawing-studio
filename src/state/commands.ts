@@ -1,6 +1,7 @@
 import type { DocEngine } from '../engine/document';
 import { clamp, uid } from '../engine/util';
-import { closeReplay, openFileDialog, openReplay, saveDoc } from './actions';
+import { closeReplay, openFileDialog, openReplay, saveActiveDocument } from './actions';
+import { EDITION } from '../platform/edition';
 import { activeDoc, currentBrush, getApp, setApp, setTool, toast, updateBrush } from './store';
 import type { ToolId } from '../engine/types';
 
@@ -76,12 +77,13 @@ export function runAction(id: string) {
   const s = getApp();
   if (id.startsWith('tool.')) return setTool(id.slice(5) as ToolId);
   switch (id) {
+    case 'app.commandPalette': return setApp({ dialog: 'commandPalette' });
     case 'edit.undo': return undo();
     case 'edit.redo': case 'edit.redo2': return redo();
-    case 'file.new': return setApp({ dialog: 'new' });
+    case 'file.new': return setApp({ dialog: EDITION.windows ? 'create' : 'new' });
     case 'file.open': return void openFileDialog();
-    case 'file.save': return d && void saveDoc(d, 'save');
-    case 'file.saveAs': return d && void saveDoc(d, 'saveAs');
+    case 'file.save': return d && void saveActiveDocument('save');
+    case 'file.saveAs': return d && void saveActiveDocument('saveAs');
     case 'file.export': return d && setApp({ dialog: 'export' });
     case 'view.fit': return d && fitView(d, 'fit');
     case 'view.actual': return d && fitView(d, 'actual');

@@ -91,6 +91,57 @@ export function inkGeometry(st: InkStroke): Geo {
   return g;
 }
 
+/** Export Crisp Ink's pressure/taper outline as a real SVG vector path. */
+export function inkStrokeSvgPath(st: InkStroke): string {
+  const d = densify(st.pts, 1.5);
+  const n = Math.floor(d.length / 3);
+  if (!n) return '';
+  let length = 0;
+  const cumulative = [0];
+  for (let i = 1; i < n; i++) {
+    length += Math.hypot(d[i * 3] - d[i * 3 - 3], d[i * 3 + 1] - d[i * 3 - 2]);
+    cumulative.push(length);
+  }
+  const taperStart = st.taperStart * Math.min(length * 0.45, st.size * 12);
+  const taperEnd = st.taperEnd * Math.min(length * 0.45, st.size * 12);
+  const widths: number[] = [];
+  for (let i = 0; i < n; i++) {
+    let width = st.size * d[i * 3 + 2];
+    if (taperStart > 0 && cumulative[i] < taperStart) width *= Math.max(0.06, Math.sqrt(cumulative[i] / taperStart));
+    if (taperEnd > 0 && length - cumulative[i] < taperEnd) width *= Math.max(0.06, Math.sqrt((length - cumulative[i]) / taperEnd));
+    widths.push(Math.max(0.25, width));
+  }
+  const fmt = (v: number) => (Math.round(v * 1000) / 1000).toString();
+  if (n === 1 || length < 0.5) {
+    const x = d[0], y = d[1], r = widths[0] / 2;
+    return `M${fmt(x + r)} ${fmt(y)}A${fmt(r)} ${fmt(r)} 0 1 0 ${fmt(x - r)} ${fmt(y)}A${fmt(r)} ${fmt(r)} 0 1 0 ${fmt(x + r)} ${fmt(y)}Z`;
+  }
+  const left: number[] = [], right: number[] = [], angle: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1);
+    let tx = d[b * 3] - d[a * 3], ty = d[b * 3 + 1] - d[a * 3 + 1];
+    const tl = Math.hypot(tx, ty) || 1;
+    tx /= tl; ty /= tl;
+    const nx = -ty, ny = tx, r = widths[i] / 2, x = d[i * 3], y = d[i * 3 + 1];
+    left.push(x + nx * r, y + ny * r);
+    right.push(x - nx * r, y - ny * r);
+    angle.push(Math.atan2(ny, nx));
+  }
+  const outline: number[] = [left[0], left[1]];
+  for (let i = 1; i < n; i++) outline.push(left[i * 2], left[i * 2 + 1]);
+  const end = n - 1, capSteps = 12;
+  for (let i = 1; i <= capSteps; i++) {
+    const a = angle[end] - Math.PI * i / capSteps, r = widths[end] / 2;
+    outline.push(d[end * 3] + Math.cos(a) * r, d[end * 3 + 1] + Math.sin(a) * r);
+  }
+  for (let i = n - 2; i >= 0; i--) outline.push(right[i * 2], right[i * 2 + 1]);
+  for (let i = 1; i <= capSteps; i++) {
+    const a = angle[0] + Math.PI - Math.PI * i / capSteps, r = widths[0] / 2;
+    outline.push(d[0] + Math.cos(a) * r, d[1] + Math.sin(a) * r);
+  }
+  return `M${fmt(outline[0])} ${fmt(outline[1])}${outline.slice(2).reduce((path, value, i) => i % 2 ? `${path} ${fmt(value)}` : `${path}L${fmt(value)}`, '')}Z`;
+}
+
 export function drawInkStroke(ctx: CanvasRenderingContext2D, st: InkStroke) {
   const g = inkGeometry(st);
   ctx.globalAlpha = st.opacity;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronFirst, ChevronLast, Circle, Film, Pause, Play, RotateCcw, SkipBack, SkipForward, Trash2, Undo2 } from 'lucide-react';
+import { ChevronFirst, ChevronLast, Circle, Download, Film, Pause, Play, RotateCcw, SkipBack, SkipForward, Square, Trash2, Undo2 } from 'lucide-react';
 import { activeDoc, confirmDialog, getApp, setApp, toast, useApp } from '../state/store';
 import { closeReplay, exportReplayVideo, openReplay, saveDoc } from '../state/actions';
 import { fmtBytes, fmtTime } from '../engine/util';
@@ -36,7 +36,7 @@ export function useReplayLoop() {
   }, [playing]);
 }
 
-export default function ReplayPanel() {
+export function ReplayControls() {
   useApp((s) => s.tick);
   const replay = useApp((s) => s.replay);
   const doc = activeDoc();
@@ -64,12 +64,13 @@ export default function ReplayPanel() {
           <Circle size={9} fill="currentColor" className={rec.active ? 'animate-pulse' : ''} />
           {rec.active ? 'Recording' : rec.enabled ? 'Paused' : 'Not recording'}
         </span>
-        <span className="ml-auto text-neutral-500">{fmtBytes(rec.bytes)} · {rec.events.length} events</span>
+        <span className="ml-auto text-neutral-500" title="Estimated retained replay memory; .carbon archive size may differ">~{fmtBytes(rec.bytes)} · {rec.events.length} events</span>
       </div>
       <div className="flex flex-wrap gap-1">
         {!rec.enabled && <Btn variant="primary" onClick={() => doc.startRecording()}><Circle size={10} fill="currentColor" /> Start recording</Btn>}
         {rec.enabled && rec.active && <Btn onClick={() => doc.pauseRecording()}><Pause size={11} /> Pause recording</Btn>}
         {rec.enabled && !rec.active && <Btn variant="primary" onClick={() => doc.resumeRecording()}><Circle size={10} fill="currentColor" /> Resume</Btn>}
+        {rec.enabled && <Btn title="Stop capture and keep the recorded replay" onClick={() => doc.stopRecording()}><Square size={10} /> Stop recording</Btn>}
         {!!rec.events.length && (
           <Btn title="Delete replay history for this document" onClick={async () => {
             const r = await confirmDialog('Delete replay history?', `This removes ${rec.events.length} recorded events (${fmtBytes(rec.bytes)}) from “${doc.name}”. The artwork itself is not affected.`, [{ label: 'Cancel', value: 'no' }, { label: 'Delete history', value: 'yes', variant: 'danger' }]);
@@ -80,6 +81,10 @@ export default function ReplayPanel() {
       <p className="text-[10px] leading-snug text-neutral-500">
         {strokes} strokes recorded. Recording is local only: strokes, timings, pressure and tilt are stored inside the .carbon file. Nothing is uploaded.
       </p>
+      {!!rec.events.length && <div className="flex flex-wrap gap-1">
+        <Btn onClick={() => saveDoc(doc)} title="Save the editable .carbon artwork project with its native event replay">Save .carbon + replay</Btn>
+        <Btn onClick={() => saveDoc(doc, 'copy')} title="Export a separate editable .carbon copy containing artwork and replay"><Download size={11} /> Export .carbon copy</Btn>
+      </div>}
 
       <SectionTitle>Playback</SectionTitle>
       {!active ? (
@@ -124,9 +129,8 @@ export default function ReplayPanel() {
           </div>
           <div className="flex flex-wrap gap-1 border-t border-white/5 pt-2">
             <Btn variant="primary" onClick={closeReplay}><Undo2 size={11} /> Return to artwork</Btn>
-            <Btn onClick={() => saveDoc(doc)}>Save project</Btn>
             {!video ? (
-              <Btn title="Render the replay to a WebM video" onClick={async () => {
+              <Btn title="Render a video using a codec supported by this browser or WebView" onClick={async () => {
                 const cancel = { cancelled: false };
                 setVideo({ p: 0, cancel });
                 try {
@@ -140,9 +144,14 @@ export default function ReplayPanel() {
               <Btn variant="danger" onClick={() => { video.cancel.cancelled = true; setVideo(null); }}>Cancel video {Math.round(video.p * 100)}%</Btn>
             )}
           </div>
-          <p className="text-[10px] leading-snug text-neutral-500">The replay is rebuilt in an isolated copy from the recorded events. Your live document is not touched, and you can keep drawing as soon as you return.</p>
+          <p className="text-[10px] leading-snug text-neutral-500">Playback rebuilds events in an isolated copy; your live artwork is untouched. A .carbon save/copy keeps editable artwork plus native replay together; artwork image export is separate. Video uses only a codec supported by this browser or WebView and keeps its actual .webm or .mp4 type.</p>
         </div>
       )}
     </div>
   );
+}
+
+/** Playback is launched from an artwork in the Library, never embedded in the drawing workspace dock. */
+export default function ReplayPanel() {
+  return <p className="p-2 text-[10px] leading-relaxed text-neutral-500">Replay and recording actions are available from an artwork card in the Project Library.</p>;
 }

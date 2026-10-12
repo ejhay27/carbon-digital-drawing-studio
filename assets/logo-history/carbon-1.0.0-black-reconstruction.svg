@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="224" viewBox="0 0 560 224" role="img" aria-labelledby="title desc">
+  <title id="title">Carbon black monochrome logo reconstruction</title>
+  <desc id="desc">A black Carbon mark and wordmark on warm white. This is a vector reconstruction based on the supplied art direction, not an archival original file.</desc>
+  <rect width="560" height="224" rx="24" fill="#F4F1E9"/>
+  <g transform="translate(34 34) scale(2.4)">
+    <path d="M54.5 28 V45 L32 58 L9.5 45 V19 L32 6 L43 12.4" fill="none" stroke="#111111" stroke-width="5.2" stroke-linejoin="round" stroke-linecap="round"/>
+    <path d="M20.6 43.6 L48.2 16.2 Q51.6 13.4 50.6 17.6 L23.6 45.8 Q21 47.4 20.6 43.6 Z" fill="#111111"/>
+    <circle cx="21.4" cy="45" r="3.1" fill="#111111"/>
+  </g>
+  <text x="238" y="125" fill="#111111" font-family="Arial, Helvetica, sans-serif" font-size="43" font-weight="600" letter-spacing="12">CARBON</text>
+  <path d="M238 149h274" stroke="#111111" stroke-width="2"/>
+  <text x="240" y="181" fill="#35322d" font-family="Arial, Helvetica, sans-serif" font-size="15" letter-spacing="2.2">WHERE ALL STARTS BEGIN.</text>
+</svg>

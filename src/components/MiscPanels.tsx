@@ -101,7 +101,7 @@ export function DocInfo() {
     ['Background', doc.background || 'transparent'], ['Layers', `${doc.layers.length} (${raster} raster, ${ink} Crisp Ink)`], ['Crisp Ink paths', String(inkStrokes)],
     ['Layer memory', fmtBytes(mem)], ['Undo memory', `${fmtBytes(undoMem)} · ${doc.undoStack.length} steps`],
     ['Replay history', doc.rec.events.length ? `Yes · ${doc.rec.events.length} events · ${fmtTime(dur)}` : 'None'],
-    ['Replay storage', fmtBytes(doc.rec.bytes) + ' (estimate)'], ['Recording', doc.rec.active ? 'Active' : doc.rec.enabled ? 'Paused' : 'Off'],
+    ['Replay memory', fmtBytes(doc.rec.bytes) + ' (estimate)'], ['Recording', doc.rec.active ? 'Active' : doc.rec.enabled ? 'Paused' : 'Off'],
     ['Created', new Date(doc.meta.created).toLocaleString()], ['Modified', new Date(doc.meta.modified).toLocaleString()],
     ['Format', '.carbon v1 (zip container)'], ['Unsaved changes', doc.dirty ? 'Yes' : 'No'],
     ['Local storage', est ? `${fmtBytes(est.usage)} of ${fmtBytes(est.quota)}` : 'n/a'],

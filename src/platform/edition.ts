@@ -1,7 +1,7 @@
-// Edition gating. The Windows (desktop) edition enables the advanced studio: Comic Studio, 3D Studio,
-// Effects, Brush Market, advanced layers and the eyedropper loupe. The Android build (Capacitor) keeps its
-// existing feature set: every new entry point checks EDITION.windows, and the Android project files,
-// scripts and configuration were not modified.
+// Edition gating. The Windows (desktop) edition enables advanced studios such as Comics, 3D, Effects,
+// Brush Market, advanced layers and the screen eyedropper. Shared local-first entry points—including
+// Home/Welcome project finding and Quick Start—remain available on both editions. Android keeps its
+// separate Capacitor project files, scripts, configuration, app identity and version line.
 import { Capacitor } from '@capacitor/core';
 
 const native = (() => {

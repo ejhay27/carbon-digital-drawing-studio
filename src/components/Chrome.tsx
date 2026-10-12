@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Circle, PanelRight, Plus, X } from 'lucide-react';
+import { PanelRight, X } from 'lucide-react';
 import { activeDoc, ALL_TOOLS, currentBrush, getApp, setApp, setTool, updateLayout, useApp, usePointer } from '../state/store';
-import { closeDoc, openReplay } from '../state/actions';
+import { closeDoc } from '../state/actions';
 import { fitView, prettyCombo, setZoom } from '../state/commands';
+import { setWin } from '../win/WinOverlay';
+import { documentWorkspace } from '../win/workspaceModel';
 import { TOOL_ICONS } from './Brand';
 import { Btn } from './ui';
 import { cn } from '../utils/cn';
@@ -12,22 +14,20 @@ export function DocTabs() {
   const activeId = useApp((s) => s.activeId);
   useApp((s) => s.tick);
   return (
-    <div className="flex h-8 shrink-0 items-end gap-px overflow-x-auto border-b border-black/60 bg-[#111113] px-1">
+    <div className="carbon-ui-toolbar flex h-8 shrink-0 items-end gap-px overflow-x-auto border-b border-black/60 bg-[#111113] px-1">
       {docs.map((d) => (
         <div
           key={d.id}
-          onClick={() => setApp({ activeId: d.id, replay: getApp().replay?.docId === d.id ? getApp().replay : null, inkSelection: [] })}
+          onClick={() => { const target = documentWorkspace(d); setApp({ activeId: d.id, replay: getApp().replay?.docId === d.id ? getApp().replay : null, inkSelection: [], homeScreen: false, ...(target !== 'comic' && getApp().tool === 'comic' ? { tool: 'brush' as const } : {}) }); setWin({ workspace: target }); }}
           onAuxClick={(e) => e.button === 1 && closeDoc(d.id)}
           className={cn('group flex h-7 max-w-[220px] cursor-pointer items-center gap-2 rounded-t-md px-3 text-[11px]', d.id === activeId ? 'bg-[#1b1b1e] text-neutral-100' : 'text-neutral-500 hover:bg-white/5 hover:text-neutral-300')}
           title={`${d.name} — ${d.width}×${d.height}${d.fileName ? ' — ' + d.fileName : ''}`}
         >
-          {d.rec.active && <Circle size={6} fill="currentColor" className="shrink-0 text-red-500" aria-label="recording" />}
           <span className="truncate">{d.name}</span>
-          {d.dirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#E8913A]" title="Unsaved changes" />}
+          {(d.dirty || d.saveState === 'saving' || d.saveState === 'failed') && <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', d.saveState === 'saving' ? 'animate-pulse bg-sky-400' : d.saveState === 'failed' ? 'bg-red-400' : 'bg-[#E8913A]')} title={d.saveState === 'saving' ? 'Saving' : d.saveState === 'failed' ? `Save failed: ${d.saveError || 'unknown error'}` : 'Unsaved changes'} />}
           <button onClick={(e) => { e.stopPropagation(); closeDoc(d.id); }} className="shrink-0 rounded p-0.5 text-neutral-500 opacity-60 hover:bg-white/10 hover:text-white group-hover:opacity-100" title="Close"><X size={11} /></button>
         </div>
       ))}
-      <button onClick={() => setApp({ dialog: 'new' })} className="mb-0.5 ml-1 rounded p-1 text-neutral-500 hover:bg-white/10 hover:text-white" title="New canvas"><Plus size={14} /></button>
     </div>
   );
 }
@@ -41,7 +41,7 @@ export function ToolRail({ tablet }: { tablet: boolean }) {
   const sz = tablet ? 44 : 34;
   const groups: string[][] = [['brush', 'eraser', 'picker', 'fill'], ['select', 'transform', 'move'], ['line', 'rect', 'ellipse', 'text', 'inkedit'], ['hand', 'zoom', 'rotate', 'symmetry']];
   return (
-    <nav className="flex shrink-0 flex-col items-center gap-0.5 overflow-y-auto border-r border-black/50 bg-[#161618] py-2" style={{ width: sz + 12 }} aria-label="Tools">
+    <nav className="carbon-ui-surface flex shrink-0 flex-col items-center gap-0.5 overflow-y-auto border-r border-black/50 bg-[#161618] py-2" style={{ width: sz + 12 }} aria-label="Tools">
       {groups.map((g, gi) => {
         const items = g.filter((t) => rail.includes(t as never));
         if (!items.length) return null;
@@ -79,12 +79,11 @@ export function StatusBar({ tablet }: { tablet: boolean }) {
   useApp((s) => s.tick);
   const pointer = usePointer((s) => s.p);
   const tool = useApp((s) => s.tool);
-  const replay = useApp((s) => s.replay);
   const s = useApp();
   const d = activeDoc();
   const b = currentBrush(tool === 'eraser', s);
   return (
-    <div className="flex h-6 shrink-0 items-center gap-3 border-t border-black/60 bg-[#111113] px-3 font-mono text-[10px] text-neutral-500">
+    <div className="carbon-ui-toolbar flex h-6 shrink-0 items-center gap-3 border-t border-black/60 bg-[#111113] px-3 font-mono text-[10px] text-neutral-500">
       {d ? (
         <>
           <span className="flex items-center gap-1">
@@ -100,16 +99,19 @@ export function StatusBar({ tablet }: { tablet: boolean }) {
           {['brush', 'eraser', 'line', 'rect', 'ellipse'].includes(tool) && <span className="hidden truncate md:inline">{b.name} · {b.size.toFixed(1)}px · {Math.round(b.opacity * 100)}%</span>}
           {d.selection && <span className="text-sky-400">selection</span>}
           <div className="flex-1" />
-          {replay?.docId === d.id && <span className="text-amber-300">REPLAY {replay.playing ? '▶' : '❚❚'} {replay.speed}×</span>}
-          <button
-            onClick={() => (d.rec.active ? d.pauseRecording() : d.rec.enabled ? d.resumeRecording() : d.startRecording())}
-            className={cn('flex items-center gap-1 rounded px-1.5 hover:bg-white/10', d.rec.active ? 'text-red-400' : 'text-neutral-500')}
-            title={d.rec.active ? 'Drawing Replay is recording (click to pause)' : 'Drawing Replay recording is off/paused (click to record)'}
+          <span
+            role="status"
+            aria-live="polite"
+            title={d.saveError || (d.librarySyncPending ? 'The file is saved; the local Library mirror will retry automatically.' : d.filePath || d.fileName || undefined)}
+            className={cn(
+              d.saveState === 'saving' ? 'animate-pulse text-sky-300' :
+                d.saveState === 'failed' ? 'text-red-400' :
+                  d.dirty ? 'text-[#E8913A]' : 'text-emerald-500/80',
+            )}
           >
-            <Circle size={7} fill="currentColor" className={d.rec.active ? 'animate-pulse' : ''} /> {d.rec.active ? 'REC' : d.rec.enabled ? 'REC paused' : 'REC off'}
-          </button>
-          {!!d.rec.events.length && !replay && <button onClick={() => openReplay(d)} className="hover:text-white">▶ replay</button>}
-          <span className={d.dirty ? 'text-[#E8913A]' : 'text-emerald-500/80'}>{d.dirty ? 'unsaved' : 'saved'}</span>
+            {d.saveState === 'saving' ? 'saving…' : d.saveState === 'failed' ? 'save failed' : d.dirty ? 'unsaved' : 'saved'}
+            {d.librarySyncPending && d.saveState !== 'failed' ? ' · Library sync pending' : ''}
+          </span>
         </>
       ) : <span>No document</span>}
       {tablet && (

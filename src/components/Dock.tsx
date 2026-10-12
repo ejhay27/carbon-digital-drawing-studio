@@ -1,5 +1,6 @@
 import { useRef, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight, ChevronUp, PanelRightClose, PictureInPicture2, SquareArrowDownRight, X } from 'lucide-react';
+import { EDITION } from '../platform/edition';
 import { PANEL_TITLES, getApp, updateLayout, useApp, type PanelId } from '../state/store';
 import ColorStudio from './ColorStudio';
 import LayersPanel from './LayersPanel';
@@ -130,10 +131,11 @@ export default function Dock({ tablet }: { tablet: boolean }) {
     window.addEventListener('pointermove', mv);
     window.addEventListener('pointerup', up);
   };
-  if (tablet && !l.dockOpen) return null;
+  if ((EDITION.windows || tablet) && !l.dockOpen) return null;
   return (
     <aside
-      className={cn('relative flex shrink-0 flex-col border-l border-black/50 bg-[#161618]', tablet && 'absolute bottom-0 right-0 top-0 z-30 shadow-2xl')}
+      id="carbon-right-dock"
+      className={cn('carbon-ui-surface relative flex shrink-0 flex-col border-l border-black/50 bg-[#161618]', tablet && 'absolute bottom-0 right-0 top-0 z-30 shadow-2xl')}
       style={{ width: tablet ? Math.min(l.dockWidth + 40, window.innerWidth - 80) : l.dockWidth }}
     >
       <div onPointerDown={startResize} className="absolute -left-1 top-0 z-10 h-full w-2 cursor-ew-resize hover:bg-[#E8913A]/30" title="Drag to resize the panel dock" />

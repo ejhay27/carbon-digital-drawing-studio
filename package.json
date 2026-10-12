@@ -1,95 +1,98 @@
 {
-    "name":  "carbon-studio",
-    "private":  true,
-    "version":  "1.0.0",
-    "type":  "module",
-    "scripts":  {
-                    "dev":  "vite",
-                    "build":  "vite build",
-                    "preview":  "vite preview",
-                    "icon":  "node scripts/make-desktop-icon.mjs",
-                    "desktop":  "npm run build \u0026\u0026 npm run icon \u0026\u0026 electron .",
-                    "desktop:dev":  "electron .",
-                "desktop:package":  "npm run build \u0026\u0026 npm run icon \u0026\u0026 electron-builder --win --publish never",                },
-    "dependencies":  {
-                         "@capacitor/android":  "^8.5.3",
-                         "@capacitor/app":  "^8.1.2",
-                         "@capacitor/cli":  "^8.5.3",
-                         "@capacitor/core":  "^8.5.3",
-                         "@capacitor/filesystem":  "^8.1.4",
-                         "@capacitor/share":  "^8.0.3",
-                         "@capacitor/status-bar":  "^8.0.4",
-                         "@types/three":  "^0.186.0",
-                         "clsx":  "2.1.1",
-                         "fflate":  "^0.8.3",
-                         "lucide-react":  "^1.53.0",
-                         "react":  "19.2.6",
-                         "react-dom":  "19.2.6",
-                         "tailwind-merge":  "3.4.0",
-                         "three":  "^0.186.1",
-                         "zustand":  "^5.0.15"
-                     },
-    "devDependencies":  {
-                            "@tailwindcss/vite":  "4.1.17",
-                            "@types/node":  "22.19.17",
-                            "@types/react":  "19.2.7",
-                            "@types/react-dom":  "19.2.3",
-                            "@vitejs/plugin-react":  "5.1.1",
-                            "electron":  "^33.2.0",
-                            "electron-builder":  "^25.1.8",
-                            "png-to-ico":  "^3.0.2",
-                            "sharp":  "^0.34.2",
-                            "tailwindcss":  "4.1.17",
-                            "typescript":  "5.9.3",
-                            "vite":  "7.3.2",
-                            "vite-plugin-singlefile":  "2.3.0"
-                        },
-    "allowScripts":  {
-                         "esbuild@0.27.7":  true,
-                         "electron-winstaller@5.4.0":  true,
-                         "electron@33.4.11":  true,
-                         "sharp@0.34.5":  true
-                     },
-    "build":  {
-                  "appId":  "studio.carbon.app",
-                  "productName":  "CARBON",
-                  "directories":  {
-                                      "output":  "release-desktop"
-                                  },
-                  "files":  [
-                                "dist/**/*",
-                                "electron/**/*",
-                                "package.json"
-                            ],
-                  "win":  {
-                              "icon":  "assets/icon.ico",
-                              "target":  [
-                                             {
-                                                 "target":  "nsis",
-                                                 "arch":  [
-                                                              "x64"
-                                                          ]
-                                             },
-                                             {
-                                                 "target":  "portable",
-                                                 "arch":  [
-                                                              "x64"
-                                                          ]
-                                             }
-                                         ]
-                          },
-                  "nsis":  {
-                               "createStartMenuShortcut":  true,
-                               "createDesktopShortcut":  true,
-                               "shortcutName":  "CARBON",
-                               "oneClick":  false,
-                               "perMachine":  false,
-                               "allowToChangeInstallationDirectory":  true,
-                               "artifactName":  "CARBON-Setup-${version}.${ext}"
-                           },
-                  "portable":  {
-                                   "artifactName":  "CARBON-Portable-${version}.${ext}"
-                               }
-              },
-    "main":  "electron/main.js"
+  "name": "carbon-studio",
+  "private": true,
+  "version": "7.9.9",
+  "description": "Carbon: Prime - professional digital drawing, painting, 3D and comic creation studio. Where all starts begin.",
+  "type": "module",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "node tests/run.mjs",
+    "icon": "node scripts/make-desktop-icon.mjs",
+    "desktop": "npm run build && npm run icon && electron .",
+    "desktop:dev": "electron .",
+    "desktop:package": "npm run build && npm run icon && electron-builder --win --publish never"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/cli": "^8.5.3",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/filesystem": "^8.1.4",
+    "@capacitor/share": "^8.0.3",
+    "@capacitor/status-bar": "^8.0.4",
+    "@types/three": "^0.186.0",
+    "clsx": "2.1.1",
+    "fflate": "^0.8.3",
+    "jsqr": "1.4.0",
+    "lucide-react": "^1.53.0",
+    "qrcode": "1.5.4",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "tailwind-merge": "3.4.0",
+    "three": "^0.186.1",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.1.17",
+    "@types/node": "22.19.17",
+    "@types/qrcode": "1.5.6",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.1.1",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "png-to-ico": "^3.0.2",
+    "sharp": "^0.34.2",
+    "tailwindcss": "4.1.17",
+    "typescript": "5.9.3",
+    "vite": "7.3.2",
+    "vite-plugin-singlefile": "2.3.0"
+  },
+  "allowScripts": {
+    "esbuild@0.27.7": true,
+    "electron-winstaller@5.4.0": true,
+    "electron@33.4.11": true,
+    "sharp@0.34.5": true
+  },
+  "build": {
+    "appId": "studio.carbon.app",
+    "productName": "CARBON PRIME",
+    "directories": {
+      "output": "release-desktop"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "createStartMenuShortcut": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "CARBON PRIME",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "CARBON-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "CARBON-Portable-${version}.${ext}"
+    }
+  }
 }

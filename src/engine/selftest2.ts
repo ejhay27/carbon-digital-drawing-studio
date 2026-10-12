@@ -1,5 +1,6 @@
 // Windows-edition acceptance tests (appended to Help → Run Diagnostics). Isolated documents only.
 import { DocEngine } from './document';
+import * as THREE from 'three';
 import { compositeDoc } from './render';
 import { deserializeComic, deserializeDoc, serializeComic, serializeDoc } from './fileFormat';
 import { FILTERS, runFx } from './filters';
@@ -11,13 +12,16 @@ import { ReplayPlayer } from './replay';
 import { sampleCurve } from './strokeRenderer';
 import { canvasDiff, canvasToBlob, ctxOf, mulberry32 } from './util';
 import type { BlendMode } from './types';
-import { APP_LABEL, APP_VERSION, compareSemver, SEMVER, WINDOWS_VERSION } from '../version';
+import { APP_LABEL, APP_VERSION, compareSemver, LS_SUFFIX, SEMVER, WINDOWS_VERSION } from '../version';
 import { RELEASES } from '../release/releases';
 import { renderDoc } from './render';
 import { renderStroke } from './strokeRenderer';
 import { loadImage } from './util';
-import { getApp } from '../state/store';
-import { applyMat, renderSceneImage, sceneOf, simplify3, smooth3, symMatrices, webglAvailable } from '../win/sceneRender';
+import { DEFAULT_SETTINGS, getApp, mergeSettings } from '../state/store';
+import { findProjects, recentPinId } from '../state/projectFinder';
+import { firstPaletteSelection, nextPaletteSelection, searchPaletteItems } from '../state/commandPalette';
+import { buildQuickStartSample } from '../state/quickStartSample';
+import { applyMat, buildGuideGroups, createViewGuide, defaultScene, localizeSurfaceStroke, projectSurfaceSymmetryPaths, renderSceneImage, sceneOf, simplify3, smooth3, symMatrices, webglAvailable } from '../win/sceneRender';
 import { fuseBrush } from '../win/BrushFusion';
 import { extractPalette } from '../win/PaletteMemory';
 import { boardOf, itemHealth } from '../win/OrbitBoard';
@@ -164,8 +168,9 @@ export async function winTests(test: T, assert: A) {
 
   await test('[Win] Version metadata is consistent (semver, release notes, file metadata)', async () => {
     assert(SEMVER.test(WINDOWS_VERSION), `WINDOWS_VERSION “${WINDOWS_VERSION}” is not MAJOR.MINOR.PATCH`);
-    assert(APP_VERSION === WINDOWS_VERSION && APP_LABEL === `CARBON ${WINDOWS_VERSION}`, 'running edition does not report WINDOWS_VERSION');
-    assert(RELEASES.length > 0 && RELEASES[0].version === WINDOWS_VERSION, `release notes start at ${RELEASES[0]?.version}, build is ${WINDOWS_VERSION}`);
+    assert(APP_VERSION === WINDOWS_VERSION + LS_SUFFIX && APP_LABEL === `CARBON PRIME ${WINDOWS_VERSION}${LS_SUFFIX}`, 'running edition does not report the PRIME WINDOWS_VERSION+ls identity');
+    assert(LS_SUFFIX === '+ls', 'release suffix must stay +ls (Local Storage)');
+    assert(RELEASES.length > 0 && RELEASES[0].version === WINDOWS_VERSION && RELEASES[0].suffix === LS_SUFFIX, `release notes start at ${RELEASES[0]?.version}${RELEASES[0]?.suffix || ''}, build is ${WINDOWS_VERSION}${LS_SUFFIX}`);
     const seen = new Set<string>();
     RELEASES.forEach((r, i) => {
       assert(SEMVER.test(r.version), `bad version ${r.version}`);
@@ -260,6 +265,78 @@ export async function winTests(test: T, assert: A) {
     const legacy = sceneOf({ version: 1, bg: '#000', ambient: 1, lights: [], objects: [], grid: true, axes: true, plane: 'xy', planeOffset: 0.5, symmetry: true, snap: false, gridSize: 0.25, ortho: false });
     assert(legacy.draw.mode === 'xy' && legacy.draw.offset === 0.5 && legacy.sym.mirror.x && Array.isArray(legacy.views), 'legacy 2.1 scene settings not migrated');
     return '6 symmetric copies, exact mirror, RDP 51→2 points, 2.1 scene migrated';
+  });
+
+  await test('[Win 7.1] Home project finder, command palette and preference migration', () => {
+    const projects = [
+      { id: recentPinId('a'), name: 'Coast sketch', savedAt: 10, size: 40, searchText: '1200 900' },
+      { id: 'device:/CARBON/Study.carbon', name: 'Study', savedAt: 20, size: 80, searchText: 'Android /CARBON/Study.carbon' },
+    ];
+    const sorted = findProjects(projects, '', [recentPinId('a')], 'recent');
+    assert(sorted[0].id === recentPinId('a'), 'pinned project did not sort first');
+    assert(findProjects(projects, 'coast 1200', [], 'name').length === 1, 'search terms did not filter the project list');
+    const commands = [
+      { id: 'surface', title: 'Surface symmetry', category: 'Workspaces', keywords: '3D mirror mesh' },
+      { id: 'disabled', title: 'Surface setup', category: 'Workspaces', keywords: 'mesh', disabled: true },
+      { id: 'save', title: 'Save project', category: 'Actions', keywords: 'local' },
+    ];
+    const found = searchPaletteItems(commands, '3d mesh');
+    assert(found.length === 1 && found[0].id === 'surface', 'command search returned a nonmatching or disabled action');
+    assert(firstPaletteSelection(commands) === 0 && nextPaletteSelection(commands, 0, 1) === 2, 'keyboard selection did not skip disabled commands');
+    const migrated = mergeSettings({ homeSceneEnabled: false, homeProjectSort: 'name', pinnedProjects: [recentPinId('a')] });
+    assert(!migrated.homeSceneEnabled && migrated.homeProjectSort === 'name' && migrated.pinnedProjects[0] === recentPinId('a'), 'new preferences overwrote existing local settings');
+    assert(DEFAULT_SETTINGS.quickStartSeen === false, 'a fresh installation should offer the optional first-run guide');
+    return 'pinned-first sorting, multi-term search, keyboard selection and legacy preference defaults';
+  });
+
+  await test('[Win 7.1] Offline sample creates a fresh editable document', () => {
+    const before = new DocEngine(24, 24, { name: 'Existing user work' });
+    const sample = buildQuickStartSample();
+    assert(sample !== before && sample.fileName === null && sample.fileHandle === null, 'sample should be a new unsaved document, not a replacement');
+    assert(sample.layers.length === 3 && sample.layers[2].type === 'ink' && (sample.layers[2].strokes?.length || 0) >= 8, 'sample paint and ink layers are not editable');
+    assert(before.name === 'Existing user work' && before.layers.length === 1, 'existing document changed while creating the sample');
+    return 'fresh 1200×900 local project, two paint layers and editable ink; prior document untouched';
+  });
+
+  await test('[Win 7.1] 3D surface symmetry projects to editable mesh-attached paths', () => {
+    const geometry = new THREE.SphereGeometry(1, 48, 24);
+    const left = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    left.position.x = -1.5; left.userData.surface = true; left.userData.objId = 'left'; left.updateMatrixWorld(true);
+    const right = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    right.position.x = 1.5; right.userData.surface = true; right.userData.objId = 'right'; right.updateMatrixWorld(true);
+    const points: number[] = [], normals: number[] = [];
+    for (const x of [0.22, 0.4, 0.5]) {
+      const n = new THREE.Vector3(x, 0.08, Math.sqrt(1 - x * x - 0.08 * 0.08)).normalize();
+      const p = right.position.clone().addScaledVector(n, 1 + 0.02 * 0.6 + 0.003);
+      points.push(p.x, p.y, p.z); normals.push(n.x, n.y, n.z);
+    }
+    const matrices = symMatrices({ mirror: { x: true, y: false, z: false }, radial: 1, axis: 'y', center: [0, 0, 0] });
+    const copies = projectSurfaceSymmetryPaths(points, normals, matrices, [left, right], 0.02, right);
+    assert(copies.length === 2 && copies[1].target === left, 'mirror copy did not project onto its matching surface mesh');
+    const local = localizeSurfaceStroke(copies[1].points, left);
+    const restored = applyMat(local.points, left.matrixWorld);
+    assert(Math.max(...restored.map((v, i) => Math.abs(v - copies[1].points[i]))) < 1e-5, 'surface symmetry copy is not editable in its target local space');
+    const noMatch = projectSurfaceSymmetryPaths(points, normals, matrices, [right], 0.02, right);
+    assert(noMatch.length === 1, 'copy without a matching surface was left floating instead of being skipped');
+    geometry.dispose(); (left.material as THREE.Material).dispose(); (right.material as THREE.Material).dispose();
+    return 'mirror raycast found the second sphere, stored a parent-local editable curve, and skipped a missing target';
+  });
+
+  await test('[Win 7] Stable guide planes and clean environment', () => {
+    const d = defaultScene();
+    assert(d.ground === false && d.guides?.length === 0 && d.activeGuideId === null, 'new scenes must not start with a floor or implicit fixed drawing plane');
+    assert(d.objects.length === 0 && d.grid === false && d.axes === false, 'new scenes must contain no starter geometry, persistent grid, or axes');
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 500);
+    camera.position.set(4, 3, 5); camera.lookAt(0, 0, 0); camera.updateMatrixWorld(true);
+    const guide = createViewGuide(camera, [0, 0, 0], 'View guide', 'test-guide');
+    const frozen = JSON.stringify(guide);
+    camera.position.set(-6, 7, 2); camera.lookAt(1, 2, 1); camera.updateMatrixWorld(true);
+    assert(JSON.stringify(guide) === frozen, 'camera navigation must not rewrite creation-time guide coordinates');
+    const hidden = buildGuideGroups([{ ...guide, visible: false }], null, true).get(guide.id)!;
+    assert(hidden.visible && hidden.children[0]?.visible === false, 'hiding a guide must not hide strokes in its transform group');
+    const legacy = sceneOf({ version: 1, bg: '#26262b', ambient: 0.5, lights: [], objects: [{ id: 'k', kind: 'cube', pos: [0, 0.5, 0] }], grid: true, axes: true, gridSize: 0.25, snap: false, ortho: false, draw: { mode: 'xz', offset: 0, pos: [0, 0, 0], rot: [0, 0, 0] }, sym: { mirror: { x: false, y: false, z: false }, radial: 1, axis: 'y', center: [0, 0, 0] }, views: [] });
+    assert(legacy.ground === false && legacy.guides?.length === 1 && legacy.objects.length === 1 && legacy.objects[0].pos[0] === 0, 'legacy scenes migrate guide metadata without adding a floor or moving artwork');
+    return 'neutral backdrop, no physical floor, fixed view guide, hidden-guide independence, and safe legacy migration';
   });
 
   await test('[Win 2.2] Spatial strokes, views and surface strokes persist in .carbon', async () => {

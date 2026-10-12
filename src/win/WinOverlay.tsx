@@ -7,13 +7,15 @@ import { LiquifySession } from '../engine/liquify';
 import { StrokeRenderer } from '../engine/strokeRenderer';
 import { sampleRegion } from '../engine/render';
 import { hitComic, newBalloon, newFx, objBounds } from '../engine/comic';
-import { setInstalledPacks, type InstalledPack } from '../engine/brushPacks';
+import { CATALOG, setInstalledPacks, withoutInstalledPackBrush, type InstalledPack } from '../engine/brushPacks';
+import { getStoredBrushPack, removeStoredBrushPack, restoreStoredBrushPack, storeBrushPackAsset } from '../engine/assetStore';
 import { invM, mapPt, rgbToHex, uid, viewMatrix } from '../engine/util';
 import { activeDoc, currentBrush, getApp, setApp, setColor, toast, useApp } from '../state/store';
 import { canvasBus, viewChanged, zoomAt } from '../state/commands';
 import { cancelDockPick, finishDockPick, useDock } from './dockModel';
+import { onThemeChange, readThemeToken } from '../theme/themeTokens';
 
-export type Workspace = 'draw' | 'comic' | '3d' | 'effects' | 'library' | 'board';
+export type Workspace = 'draw' | 'comic' | '3d' | 'infinite' | 'effects' | 'library' | 'projects' | 'board';
 export type ComicMode = 'select' | 'panel-rect' | 'panel-poly' | 'panel-free' | 'balloon' | 'fx';
 
 interface WinState {
@@ -38,6 +40,8 @@ export const GRADIENT_PRESETS: { name: string; stops: GradStop[] }[] = [
   { name: 'Rainbow', stops: [{ o: 0, c: '#ff0000', a: 1 }, { o: 0.2, c: '#ffbf00', a: 1 }, { o: 0.4, c: '#33cc33', a: 1 }, { o: 0.6, c: '#00bfff', a: 1 }, { o: 0.8, c: '#4b0082', a: 1 }, { o: 1, c: '#ee82ee', a: 1 }] },
 ];
 
+let packAssetMigrationComplete = false;
+
 export const useWin = create<WinState>()(
   persist(
     (): WinState => ({
@@ -51,11 +55,95 @@ export const useWin = create<WinState>()(
     }),
     {
       name: 'carbon-win-v1',
-      partialize: (s) => ({ workspace: s.workspace === 'library' ? 'draw' : s.workspace, packs: s.packs, liq: s.liq, grad: s.grad, comic: { ...s.comic, selected: null }, libView: s.libView }),
+      partialize: (s) => ({
+        workspace: s.workspace === 'library' || s.workspace === 'projects' ? 'draw' : s.workspace,
+        // Keep legacy brush bytes until the IndexedDB migration succeeds; afterward persist metadata only.
+        packs: packAssetMigrationComplete ? s.packs.map(({ brushes: _brushes, ...pack }) => pack) : s.packs,
+        liq: s.liq, grad: s.grad, comic: { ...s.comic, selected: null }, libView: s.libView,
+      }),
+      onRehydrateStorage: () => (state, error) => {
+        if (error) {
+          console.warn('[CARBON] Brush-pack asset migration deferred; legacy local pack data is being preserved.', error);
+          return;
+        }
+        if (state) void hydrateInstalledPackAssets(Array.isArray(state.packs) ? state.packs : []);
+      },
     },
   ),
 );
 export const setWin = (p: Partial<WinState>) => useWin.setState(p);
+
+/** Remove one imported brush from its pack, rewriting the shared IndexedDB asset; bundled catalog packs are immutable. */
+export async function removeImportedBrushFromPack(brushId: string) {
+  const initial = useWin.getState();
+  const owner = initial.packs.find((pack) => pack.source !== 'catalog' && pack.brushes?.some((brush) => brush.id === brushId));
+  if (!owner) throw new Error('This imported brush is no longer installed.');
+  const reduced = withoutInstalledPackBrush(owner, brushId);
+  if (reduced) {
+    const stored = await getStoredBrushPack(owner.id);
+    await storeBrushPackAsset({
+      id: reduced.id, name: reduced.name, category: reduced.category, version: reduced.version,
+      source: reduced.source, brushes: reduced.brushes || [], downloadBytes: stored?.downloadBytes,
+    }, Infinity);
+  } else {
+    await removeStoredBrushPack(owner.id);
+  }
+
+  const latest = useWin.getState();
+  const packs = reduced
+    ? latest.packs.map((pack) => pack.id === owner.id ? reduced : pack)
+    : latest.packs.filter((pack) => pack.id !== owner.id);
+  setWin({ packs });
+
+  const app = getApp();
+  const overrides = { ...app.overrides };
+  delete overrides[brushId];
+  setApp({
+    overrides,
+    favorites: app.favorites.filter((id) => id !== brushId),
+    recentBrushes: app.recentBrushes.filter((id) => id !== brushId),
+    collections: app.collections.map((collection) => ({ ...collection, ids: collection.ids.filter((id) => id !== brushId) })),
+    brushId: app.brushId === brushId ? 'pencil-hb' : app.brushId,
+    eraserBrushId: app.eraserBrushId === brushId ? 'eraser-hard' : app.eraserBrushId,
+  });
+  return { name: owner.name, remainingBrushes: reduced?.brushes?.length || 0 };
+}
+
+async function hydrateInstalledPackAssets(packs: InstalledPack[]) {
+  let migrationSucceeded = true;
+  const hydrated = await Promise.all(packs.map(async (pack) => {
+    try {
+      let asset = await getStoredBrushPack(pack.id);
+      if (!asset && pack.source === 'catalog') {
+        const bundled = CATALOG.find((item) => item.id === pack.id);
+        if (bundled) {
+          const brushes = bundled.brushes();
+          asset = await storeBrushPackAsset({ ...bundled, source: 'catalog', brushes }, Infinity);
+          return { ...pack, brushes };
+        }
+      }
+      if (!asset && pack.brushes?.length) {
+        // One-time migration of v1 localStorage pack contents into IndexedDB.
+        asset = await storeBrushPackAsset({ ...pack, source: pack.source, brushes: pack.brushes }, Infinity);
+      }
+      if (asset) return restoreStoredBrushPack(asset);
+      return { ...pack, missing: true };
+    } catch (error) {
+      migrationSucceeded = false;
+      console.warn(`[CARBON] Could not migrate brush pack “${pack.name}”; keeping its legacy data.`, error);
+      return { ...pack, missing: !pack.brushes?.length };
+    }
+  }));
+
+  if (!migrationSucceeded) return;
+  packAssetMigrationComplete = true;
+  // Apply only to packs that still exist, so a concurrent uninstall is never undone.
+  const resolved = new Map(hydrated.map((pack) => [pack.id, pack]));
+  const current = useWin.getState().packs;
+  const next = current.map((pack) => resolved.get(pack.id) || pack);
+  setWin({ packs: next });
+}
+
 setInstalledPacks(useWin.getState().packs);
 useWin.subscribe((s, prev) => { if (s.packs !== prev.packs) { setInstalledPacks(s.packs); setApp({ tick: getApp().tick + 1 }); } });
 
@@ -165,6 +253,7 @@ export default function WinOverlay() {
   useEffect(() => {
     const inv = () => { dirty.current = true; };
     canvasBus.addEventListener('view', inv);
+    const stopThemeListening = onThemeChange(inv);
     const kd = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return;
       if (e.code === 'Space') space.current = true;
@@ -208,7 +297,7 @@ export default function WinOverlay() {
     const cv = ref.current!;
     const wheel = (e: WheelEvent) => e.preventDefault();
     cv.addEventListener('wheel', wheel, { passive: false });
-    return () => { cancelAnimationFrame(raf); ro.disconnect(); mq?.removeEventListener('change', onDpr); cv.removeEventListener('wheel', wheel); canvasBus.removeEventListener('view', inv); window.removeEventListener('keydown', kd, true); window.removeEventListener('keyup', ku); };
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); mq?.removeEventListener('change', onDpr); cv.removeEventListener('wheel', wheel); canvasBus.removeEventListener('view', inv); stopThemeListening(); window.removeEventListener('keydown', kd, true); window.removeEventListener('keyup', ku); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -242,15 +331,15 @@ export default function WinOverlay() {
       const sel = comicObjects(d).find((o) => o.id === w.comic.selected);
       if (sel) {
         const b = objBounds(sel);
-        x.strokeStyle = '#4da3ff'; x.lineWidth = 1.5; rect(b.x, b.y, b.w, b.h); x.stroke();
-        x.fillStyle = '#fff';
+        x.strokeStyle = readThemeToken('selection', '#4da3ff'); x.lineWidth = 1.5; rect(b.x, b.y, b.w, b.h); x.stroke();
+        x.fillStyle = readThemeToken('selectionText', '#fff');
         for (const [hx, hy] of handlePts(sel)) { const [a, bb] = S(hx, hy); x.fillRect(a - 5, bb - 5, 10, 10); x.strokeRect(a - 5, bb - 5, 10, 10); }
       }
       const dr = drag.current;
-      if (dr?.k === 'comicRect') { x.setLineDash([5, 4]); x.strokeStyle = '#E8913A'; rect(Math.min(dr.x0, dr.x1), Math.min(dr.y0, dr.y1), Math.abs(dr.x1 - dr.x0), Math.abs(dr.y1 - dr.y0)); x.stroke(); x.setLineDash([]); }
+      if (dr?.k === 'comicRect') { x.setLineDash([5, 4]); x.strokeStyle = readThemeToken('selection', '#E8913A'); rect(Math.min(dr.x0, dr.x1), Math.min(dr.y0, dr.y1), Math.abs(dr.x1 - dr.x0), Math.abs(dr.y1 - dr.y0)); x.stroke(); x.setLineDash([]); }
       const pts = dr?.k === 'comicFree' ? dr.pts : poly.current;
       if (pts.length >= 2) {
-        x.strokeStyle = '#E8913A'; x.lineWidth = 2; x.beginPath();
+        x.strokeStyle = readThemeToken('selection', '#E8913A'); x.lineWidth = 2; x.beginPath();
         for (let i = 0; i < pts.length; i += 2) { const [a, b] = S(pts[i], pts[i + 1]); if (i) x.lineTo(a, b); else x.moveTo(a, b); }
         if (hover.current && poly.current.length) { const [a, b] = S(hover.current.x, hover.current.y); x.lineTo(a, b); }
         x.stroke();
