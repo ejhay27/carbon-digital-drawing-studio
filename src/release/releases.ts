@@ -1,16 +1,20 @@
-// CARBON for Windows: release notes (bundled with the app, so they work offline).
+// Carbon: Prime for Windows: release notes (bundled with the app, so they work offline).
 //
 // Maintenance rules
 //  • Newest release first. The first entry MUST equal WINDOWS_VERSION in src/version.ts (checked by diagnostics).
-//  • List only what actually shipped in that build. Do not add future/planned versions here.
-//  • `date` is an ISO date (YYYY-MM-DD) set when the build is published. Leave it null if the date was not
-//    recorded; the UI then says "Release date not recorded" instead of inventing one.
+//  • Include shipped notes or explicitly identified local source candidates; never present planned work as shipped.
+//  • `status: 'candidate'` labels unpublished local source builds. For a published build, `date` is an ISO
+//    date (YYYY-MM-DD); leave it null if unrecorded so the UI does not invent a release date.
 //  • category: 'major' (MAJOR bump), 'feature' (MINOR bump), 'patch' (PATCH bump).
 
 export type ReleaseCategory = 'major' | 'feature' | 'patch';
 
 export interface Release {
   version: string;
+  /** Explicitly marks a local/unpublished source candidate in the UI. */
+  status?: 'candidate';
+  /** Optional display suffix for this release identity, e.g. '+ls' (Local Storage). */
+  suffix?: string;
   title: string;
   date: string | null;
   category: ReleaseCategory;
@@ -23,6 +27,213 @@ export interface Release {
 }
 
 export const RELEASES: Release[] = [
+  {
+    version: '7.7.2',
+    status: 'candidate',
+    suffix: '+ls',
+    title: 'One clear start, brush-first spatial ink',
+    date: null,
+    category: 'patch',
+    summary: 'Unpublished Windows/desktop source candidate. It centralizes creation and document routing, adds a 2D-brush textured ribbon workflow to 3D Studio, restores the illustrated coast surf loop, and adds save-before-Home handling. Platform acceptance remains outstanding.',
+    features: [
+      'Create is the entry point for supported Draw, Comic Studio and 3D Studio documents; Orbit Board remains available as a workspace.',
+      'Draw, Comic and 3D tabs resolve to their owning document type. Comic page tabs remain one .carboncomic project for save and normal close; explicit page deletion remains separate.',
+      '3D Studio defaults to a compact spatial-ink workflow: Carbon 2D brush tips render onto genuine 3D ribbon geometry, pen pressure controls width, and surface strokes are stored in target-local coordinates. Tube/sweep geometry remains an advanced option.',
+      'Home uses an offline illustrated Philippine-coast plate with a deterministic Canvas 2D wave loop; the skiff remains static. Motion controls, reduced-motion handling, visibility pausing and a static fallback remain available.',
+      'The global Home action waits for the active Draw, Comic or 3D project save result; 3D Studio exposes the same action. Cancellation or a reported failure leaves the editor open.',
+    ],
+    improvements: [
+      'Workspace switching and Save commands route to the correct active document instead of treating Comic/3D as relocatable workspace entries. Orbit Board is retained.',
+      'Repeated identical Undo messages refresh one toast instead of stacking duplicates.',
+      '3D strokes carry pressure samples through simplification and save brush identity/texture references with the scene data.',
+    ],
+    fixes: [
+      'Separates Create from workspace switching and removes the relocated Comic/3D entries without removing Orbit Board.',
+      'Normal Comic close now prompts for the complete project; deleting a page remains an explicit page-level action.',
+      'Surface-ribbon centerlines use a small mesh offset so thin pressure/taper sections do not inherit an unnecessarily thick-tube lift.',
+    ],
+    compatibility: [
+      'Windows/desktop package and display metadata use Carbon: Prime 7.7.2+ls. This is a local candidate, not a published release.',
+      'Android remains separately versioned as CARBON 1.0.0; the Android versionName/versionCode are not changed by this Windows-only bump.',
+      'No .carbon archive format version or runtime dependency version is intentionally changed. Existing local projects remain the save target.',
+      'No cloud upload, remote asset fetch, screen/cursor/idle capture, camera scanning/permission, AI drawing, generative fill, assistant, animation timeline or Carbon: Flux integration is added.',
+    ],
+    knownIssues: [
+      'Canvas/WebGL browser appearance and interaction have not been visually accepted. Node tests exercise geometry/math but do not prove textured-ribbon rendering on a real WebGL device.',
+      'Windows packaging/installer and Android APK/device behavior have not been tested. Save-picker and native document-provider flows still require platform testing.',
+      'Home reduced-motion/static-fallback and coastline alignment are implemented but still need a browser visual review on representative viewport sizes.',
+      '3D edits are not part of the 2D Drawing Replay timeline. Mix/smudge/crisp-style brushes are represented by a deterministic ink mask on the spatial ribbon rather than replaying those 2D blend operations in 3D.',
+    ],
+  },
+  {
+    version: '7.6.0',
+    status: 'candidate',
+    suffix: '+ls',
+    title: 'Drawing Replay that keeps its timing',
+    date: null,
+    category: 'feature',
+    summary: 'Local Carbon: Prime 7.6.0+ls source candidate: preserve real pauses by default, capture terminal stroke input, improve local recovery, and expose recording controls from My Illustrations. This candidate is not published; platform acceptance is still pending.',
+    features: [
+      'Drawing Replay keeps the real time between recorded edits by default; optional pause shortening is an explicit preference. It stores document events and stroke samples, never idle frames, cursor/hand movement, menus, screen, microphone or camera.',
+      'When enabled, recording starts for new drawings and projects opened without existing replay history. Completed edits schedule a local IndexedDB recovery save after a short quiet period, alongside the periodic and app-lifecycle sweeps.',
+      'My Illustrations is available on Home and from File → My Illustrations while editing; browser-local recents and Android device files remain distinct. Project cards open playback and recording controls, and replay history can be deleted separately from artwork.',
+      'Replay controls explicitly start, pause, resume or stop capture without deleting history; deleting replay data is a separately confirmed action that leaves artwork intact.',
+      'Native .carbon saves/copies retain editable artwork and its event replay. Artwork image export remains flattened PNG, JPEG or WebP; replay video uses a platform-supported MediaRecorder WebM or MP4 type with the matching extension.',
+      'Home uses an original generated aerial beach plate with a deterministic 14-second Canvas 2D surf loop; the boat and layout remain static. Reference screenshots/video are not embedded, and no runtime dependency was added.',
+    ],
+    improvements: [
+      'Pointer-up and pointer-cancel paths keep the terminal position of raster and Crisp Ink strokes; pressure is not forced to zero at stylus release and sample times remain monotonic.',
+      'Replay memory estimates now include full checkpoint canvas clones and conservative stroke-sample overhead, with settings/status describing the estimate rather than archive size.',
+      'Session autosave records the revision it serialized and queues another pass if a document changes while it is being encoded.',
+    ],
+    fixes: [
+      'Projects opened without replay history can now begin local recording when the preference is enabled; saved recordings are not duplicated by project save/export.',
+      'Video output type and filename are derived from the encoder output instead of treating WebM as MP4 or promising an unsupported codec.',
+    ],
+    compatibility: [
+      'Carbon: Prime remains on the 7.x+ls line. Android keeps its separate CARBON 1.0.0 identity and build numbering.',
+      'No .carbon archive version or dependency version changed. Existing replay logs remain readable; time already shortened in older recordings cannot be recovered.',
+      'No account, cloud upload, screen recording, AI drawing, generative fill, animation timeline or Carbon: Flux integration is added.',
+    ],
+    knownIssues: [
+      'This is an unpublished source candidate. Node tests and the web build pass, but browser interaction, Windows runtime/installer, Android APK/device, QR image decode and video encoder acceptance are not complete.',
+      'Drawing Replay covers the 2D document event engine; 3D Studio and Orbit Board edits are not part of this replay timeline.',
+      'MP4 is available only where MediaRecorder reports and returns MP4; otherwise only supported WebM is offered or video export fails. The app does not transcode.',
+      'Browser-local recent projects are not a full Windows filesystem scan. Android can list only the CARBON folder it can access; use Open for other device locations.',
+    ],
+  },
+  {
+    version: '7.5.1',
+    status: 'candidate',
+    suffix: '+ls',
+    title: 'Brush assets and local creation tools',
+    date: null,
+    category: 'feature',
+    summary: 'Local source candidate adding a real bundled brush marketplace/storage foundation, bounded Carbon QR brush sharing, and draft-based custom brush and eraser creation. It is not published; browser UI and platform acceptance are still outstanding.',
+    features: [
+      'Brush Marketplace keeps its bundled catalog available offline and reports when no optional remote catalog is configured; it does not invent online downloads, ratings or popularity.',
+      'Brush Lab and Custom Eraser Studio edit an isolated draft through the real brush engine preview, then save custom brush presets and eraser tips separately in local app state.',
+      'Brush QR sharing generates a compact PNG or text payload for a validated single brush; import scans a user-selected QR image locally without camera access, then selects the first imported brush for use. Arbitrary URLs are rejected and larger/stamped brushes use .carbonpack files.',
+      'The Brush Library has an Imported Brushes section for standalone imports and pack-sourced brushes; a per-brush export-and-remove action preserves other pack contents and remaining IDs.'
+    ],
+    improvements: [
+      'Validated brush pack bytes and metadata use a shared local asset store with download/install limits, storage estimates and separate input versus installed-size reporting.',
+      'Brush pack import/export and QR parsing enforce size/format/metadata guards; custom stamp-image imports have a 300 KB cap and must decode before saving.',
+      'Custom eraser presets are part of the persisted local brush model, can be selected only while Eraser is active, and are included in confirmed removal and export workflows.',
+    ],
+    fixes: [
+      'Custom preset removal now asks for confirmation and cleans up active references, favorites, recent lists and collection memberships without modifying existing artwork.',
+      'Legacy malformed or missing pack data is handled without silently discarding legacy brush definitions.',
+    ],
+    compatibility: [
+      'No .carbon archive or manifest format change; existing artwork and document files are not rewritten by brush-asset operations.',
+      'Carbon: Prime stays on the 7.x+ls line; Android retains its separate CARBON 1.0.0 identity.',
+      'No account, cloud sync, telemetry, AI drawing or animation timeline is added. Remote marketplace hosting is optional and is not configured in this repository.',
+    ],
+    knownIssues: [
+      'This source candidate has code-level tests only. QR image decoding, custom brush save/use flows and the UI have not received end-to-end browser or platform acceptance.',
+      'Custom brush and eraser definitions remain in local app preferences; the unified asset manager and project illustration browser are still future work.',
+    ],
+  },
+  {
+    version: '7.1.1',
+    status: 'candidate',
+    suffix: '+ls',
+    title: 'Project overview and attribution',
+    date: null,
+    category: 'patch',
+    summary: 'Documentation-only local source candidate patch: the project README now describes Carbon: Prime, credits its developer, lists the languages and technologies, summarizes features, and explains the local-first app and build paths. Not published.',
+    features: [],
+    improvements: [
+      'README now gives new users a product overview, developer attribution, programming-language summary, feature list, local-first architecture overview and platform-aware build instructions.',
+    ],
+    fixes: [],
+    compatibility: [
+      'No product-code, .carbon format or Android change is included in this documentation patch. Android remains separately identified as CARBON 1.0.0.',
+    ],
+    knownIssues: [
+      'This 7.1.1+ls source candidate is not a published release; browser and platform acceptance gaps from 7.1.0+ls remain.',
+    ],
+  },
+  {
+    version: '7.1.0',
+    status: 'candidate',
+    suffix: '+ls',
+    title: 'A more discoverable Carbon',
+    date: null,
+    category: 'feature',
+    summary: 'Compatible local-first feature increment: find and pin projects, launch commands from Ctrl+K, learn with an offline guide and editable sample, and apply 3D symmetry directly to object surfaces. The source candidate is not a published release; Windows/Android runtime acceptance remains separate.',
+    features: [
+      'Home project finder searches browser-local recent projects and Android device files in separate sections; pins and sort preference are stored locally, with sorting by recent activity, name or size.',
+      'Ctrl+K opens a searchable command palette for actions, tools, Windows workspaces, preferences and recent project files. Up/Down, Home/End, Enter and Escape support keyboard navigation; the shortcut is configurable.',
+      'An optional, dismissible first-run guide works offline and includes an editable multi-layer sample project. Opening the sample always creates a fresh document and never replaces an existing file or open document.',
+      '3D mirror and radial surface symmetry now ray-projects copies onto real visible mesh surfaces. Each full path must stay on one target surface; unmatched copies are skipped rather than left floating. Created curves remain separately editable and follow their parent objects.',
+    ],
+    improvements: [
+      'New preferences backfill safely into existing Carbon settings without resetting prior shortcuts, home-scene choices or other stored preferences.',
+      'Project pins use distinct browser-recent and Android-device keys, and removing a project from a list also clears its corresponding local pin.',
+      'Surface strokes retain sampled surface normals through smoothing/simplification and transform those normals into target-local geometry space.',
+    ],
+    fixes: [
+      'The 3D surface target previously ignored mirror and radial symmetry. Copies are now projected along transformed per-sample normals and omitted if no complete matching surface path exists.',
+      'Symmetric surface strokes previously had no target mesh parent, leaving them as floating geometric copies. Every accepted copy now stores points in the hit mesh local space and is parented to that mesh.',
+      'Live surface-symmetry preview geometry and materials are disposed when refreshed or cleared.',
+    ],
+    compatibility: [
+      'No .carbon archive or manifest format change; existing projects, layers, scene data, brushes, comics and recovery data remain compatible.',
+      'Carbon: Prime stays on 7.x+ls. Android keeps its separate CARBON 1.0.0 identity and build metadata; no Android version bump is implied.',
+      'All four features use bundled code and existing local storage/files. No accounts, cloud services, telemetry, remote assets, AI drawing or animation timeline were added.',
+    ],
+    knownIssues: [
+      'This local source candidate has code-level tests but still requires browser interaction/visual acceptance and separate Windows/Android runtime testing before any platform support claim or publication.',
+    ],
+  },
+  {
+    version: '7.0.0',
+    status: 'candidate',
+    suffix: '+ls',
+    title: 'Carbon: Prime',
+    date: null,
+    category: 'major',
+    summary: 'Carbon: Prime 7.0.0+ls source candidate: a locally packaged Philippine coast Home scene, a white-ground spatial workspace with separated camera input, exact project information, and safer local project writes. Local Storage (+ls) remains the only storage: offline, no account, no cloud. Platform acceptance and publication are still pending.',
+    features: [
+      'Carbon: Prime identity: consistent 7.0.0+ls release numbering across the app, About screen, release notes and packaging; the +ls suffix marks Local Storage builds. The Carbon name, mark and “Where all starts begin.” tagline are preserved.',
+      'Home scene source now bundles a Philippine-coast/lighthouse image and adds restrained Canvas 2D wave/reflection motion with persisted show/motion settings and a reduced-motion path. The asset is local; exact browser framing, contrast, clickability, reduced-motion behavior and resource cleanup still need visual/runtime acceptance.',
+      'Home actions are wired in source for New Drawing, Open Project, Recent Projects, Import Artwork, Brush Studio, 3D Studio, Comics Studio, Carbon Library, Latest Patches, Settings and Help & About; browser navigation still needs acceptance.',
+      'About: shows © Ejhay Claus B. Predonio, with a folder icon that opens a dedicated scrollable About / Project Information dialog containing the supplied project text verbatim.',
+      '3D Studio: White Ground environment. New scenes start on a genuine, flat, pure-white ground plane with a neutral background and a perspective grid that extends across the workspace and responds correctly to camera movement.',
+      '3D Studio: dedicated Camera navigation tool. One-finger drag orbits on touch, two fingers pan, pinch zooms; mouse drag orbits in Camera mode, middle-drag pans, wheel zooms, Shift+wheel pans for trackpads. Drawing tools never move the camera by accident, and a mode indicator shows what input will do.',
+      '3D Studio: new empty-scene default — no decorative starter cube — plus environment controls for ground visibility, ground color, subtle shadow display, grid spacing and camera field of view.',
+      'Camera field of view (perspective strength) is adjustable and saved with the scene; existing saved views, camera reset and perspective/orthographic switching are unchanged.',
+    ],
+    improvements: [
+      'The 3D render-to-layer and comic panel captures render the same white ground as the viewport, so captures match what you see.',
+      'Legacy 2.0–2.2 scenes migrate to the white-ground environment automatically; their strokes, objects and camera stay exactly where they were.',
+      'Scene camera poses, projection changes and environment edits mark the document dirty and advance its autosave revision; camera-only changes are no longer silently omitted from session recovery.',
+      'Two-finger 3D touch gestures latch to navigation until all fingers lift, preventing a second finger from starting a stray spatial stroke.',
+      'Android project replacement verifies staged bytes and retains a rollback copy before overwriting; a failed install restores the previous project or leaves a named recovery copy.',
+      'Project archive loading now rejects missing mask, declared asset and replay files instead of silently opening a document with those data omitted.',
+      'The Node suite covers local surface ray hits and surface-stroke coordinate conversion, camera dirty/autosave state, touch gesture latching, archive references, Android write rollback and exact About copy.',
+    ],
+    fixes: [
+      'package.json was invalid JSON (a trailing comma), so npm install, Electron packaging and scripts failed before starting. The manifest is repaired; typecheck, Node tests and the web build pass in the audited environment.',
+      'A stray unused import made tsc --noEmit fail (the repo’s own strictness rule) — the build is now clean under the repository’s TypeScript settings.',
+      'The Android writer previously deleted an existing project before attempting a replacement rename; a later write failure could therefore lose the old file. Replacement now stages, verifies and rolls back safely.',
+      'A missing .carbon layer mask, declared asset or replay file was previously ignored on load in some paths, silently dropping project data. Such archives now fail clearly before being opened.',
+      'A second finger could cancel an active 3D stroke and then immediately start a new one. The entire multi-touch gesture now remains navigation-only.',
+      'Camera orbit and some non-undoable 3D settings changed persisted scene data without reliably marking the document dirty. They now update dirty/autosave state.',
+      'The Windows packaging script now recognises “CARBON PRIME x.y.z” portable README files when archiving the previous build.',
+    ],
+    compatibility: [
+      'Still .carbon format v1: 2.0–2.2 projects, comics, brush packs, palettes and scenes open unchanged; new scene fields are optional extension data that older versions ignore.',
+      'Android keeps its separate 1.0.0 version line, labels, app identity, configuration and build path. The shared native project writer gains rollback protection; the APK and physical-device behavior were not verified in this environment.',
+    ],
+    knownIssues: [
+      'Drawing Replay still does not record 3D Studio edits (3D has its own undo), and symmetry is not applied to strokes drawn on object surfaces — carried forward from 2.2.0.',
+      'This audit environment cannot fetch Electron binaries because npm certificate verification fails during electron postinstall. No Windows installer or Android APK is claimed as built; package them on the target platforms before release.',
+      'Help → Run Diagnostics (the Canvas/WebGL acceptance suite), Home/About visual and interaction acceptance, real stylus/touch/trackpad behavior, and physical Android/Windows runtime acceptance still require platform testing.',
+    ],
+  },
   {
     version: '2.2.0',
     title: 'Connected Creative Studio',

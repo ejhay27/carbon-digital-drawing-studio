@@ -89,7 +89,7 @@ export async function branchFrom(doc: DocEngine, s: SnapMeta | null, name: strin
   d.fileName = null;
   d.comic = null;
   d.dirty = true;
-  addDoc(d, false);
+  addDoc(d);
   return d;
 }
 

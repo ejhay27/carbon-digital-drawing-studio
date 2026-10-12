@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, Copy, Pencil, Pipette, Plus, Replace, Trash2 } from 'lucide-react';
+import { ChevronDown, Copy, Droplet, Pencil, Pipette, Plus, Replace, Trash2 } from 'lucide-react';
 import { activeDoc, confirmDialog, getApp, promptDialog, setApp, setColor, toast, useApp } from '../state/store';
 import { uid } from '../engine/util';
 import { Select, Slider, Toggle } from '../components/ui';
@@ -8,6 +8,7 @@ import {
   addToDock, duplicateSwatch, globalSetId, moveSwatch, norm, parseColorInput, readDock, removeSwatch, renameSwatch, replaceSwatch, rgbLabel,
   startDockPick, updateDock, useDock, writeDock, type DockCfg, type DockScope, type Swatches,
 } from './dockModel';
+import { pickScreenColor, screenPickAvailable } from '../platform/screenPick';
 
 function useWindowSize() {
   const [s, set] = useState({ w: window.innerWidth, h: window.innerHeight });
@@ -122,6 +123,13 @@ export default function ColorDock({ side }: { side: 'start' | 'end' }) {
         <Plus size={12} className="mix-blend-difference text-white" />
       </button>
       <button title="Sample a color from the canvas into the dock" onClick={startDockPick} className={cn('flex h-6 w-6 items-center justify-center rounded', picking ? 'bg-[#E8913A] text-black' : 'text-neutral-400 hover:bg-white/10 hover:text-white')}><Pipette size={13} /></button>
+      {screenPickAvailable() && (
+        <button
+          title="Quick Color Pick: sample any color on your screen (system picker)"
+          onClick={async () => { const hex = await pickScreenColor(); if (hex) addToDock(hex, scope); }}
+          className="flex h-6 w-6 items-center justify-center rounded text-neutral-400 hover:bg-white/10 hover:text-white"
+        ><Droplet size={13} /></button>
+      )}
       <button title="Add by HEX or RGB" onClick={() => setShowInput(!showInput)} className={cn('flex h-6 w-6 items-center justify-center rounded text-[10px] font-semibold', showInput ? 'bg-white/15 text-white' : 'text-neutral-400 hover:bg-white/10')}>#</button>
       <div className={cn('flex rounded bg-black/30 p-0.5 text-[9px]', !bottom && !expanded && 'flex-col')}>
         {(['global', 'project'] as DockScope[]).map((sc) => (

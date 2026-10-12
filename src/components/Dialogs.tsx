@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle2, Loader2, XCircle } from 'lucide-react';
+import { Box, Brush, CheckCircle2, FolderOpen, LayoutDashboard, Loader2, MessageSquare, Sparkles, Wand2, XCircle } from 'lucide-react';
 import { activeDoc, ALL_TOOLS, DEFAULT_SHORTCUTS, getApp, SHORTCUT_LABELS, setApp, toast, updateSettings, useApp } from '../state/store';
-import { configureDoc, exportImage, newDocument } from '../state/actions';
+import { configureDoc, exportImage, new3DDocument, newDocument } from '../state/actions';
 import { comboFromEvent, prettyCombo } from '../state/commands';
 import { checkDims, MAX_AREA, MAX_SIDE } from '../engine/document';
 import { runDiagnostics, type TestResult } from '../engine/selftest';
@@ -14,6 +14,13 @@ import { APP_LABEL, APP_VERSION } from '../version';
 import { ColorDockSettings } from '../win/ColorDock';
 import { PatchesDialog } from '../win/Patches';
 import { BrushFusionDialog } from '../win/BrushFusion';
+import { ABOUT_CREATOR, ABOUT_PROJECT_COPY } from './aboutCopy';
+import CommandPalette from './CommandPalette';
+import QuickStartDialog from './QuickStartDialog';
+import MyIllustrationsDialog from './MyIllustrationsDialog';
+import { setWin } from '../win/WinOverlay';
+import { NewComicForm, switchWorkspace } from '../win/WinPanels';
+import { findWorkspaceDocument } from '../win/workspaceModel';
 
 const close = () => setApp({ dialog: null }); // closes any open dialog
 
@@ -22,6 +29,63 @@ export const CANVAS_PRESETS = [
   { name: 'A5 @ 300 dpi', w: 1748, h: 2480 }, { name: 'Comic page', w: 1988, h: 3056 }, { name: 'Sketch', w: 1600, h: 1200 },
   { name: '4K UHD', w: 3840, h: 2160 }, { name: 'Phone wallpaper', w: 1290, h: 2796 },
 ];
+
+function CreateDialog() {
+  const [screen, setScreen] = useState<'choices' | 'comic'>('choices');
+  const closeCreate = () => setApp({ dialog: null });
+  const createBoard = () => {
+    const d = activeDoc() || getApp().docs[0] || newDocument(1600, 1200, 'Orbit Board', null);
+    if (!d) return;
+    if (!d.board) { d.board = { version: 1, items: [], view: { x: 40, y: 40, z: 1 } }; d.dirty = true; d.emit(); }
+    setApp({ activeId: d.id, dialog: null, homeScreen: false });
+    switchWorkspace('board');
+  };
+  const createEffects = () => {
+    const d = findWorkspaceDocument(getApp().docs, 'draw') || newDocument(CANVAS_PRESETS[5].w, CANVAS_PRESETS[5].h, 'Untitled');
+    if (!d) return;
+    setApp({ activeId: d.id, dialog: null, homeScreen: false });
+    switchWorkspace('effects');
+  };
+  const create3d = () => {
+    const d = new3DDocument();
+    if (!d) return;
+    setApp({ dialog: null, homeScreen: false });
+    setWin({ workspace: '3d' });
+  };
+  const card = (title: string, detail: string, Icon: typeof Brush, run: () => void, primary = false) => (
+    <button key={title} onClick={run} className={cn('group flex min-h-[92px] items-start gap-3 rounded-xl border p-4 text-left transition', primary ? 'border-[#E8913A]/50 bg-[#E8913A]/10 hover:bg-[#E8913A]/20' : 'border-white/10 bg-white/[0.03] hover:border-white/25 hover:bg-white/[0.07]')}>
+      <Icon size={20} className={primary ? 'mt-0.5 text-[#E8913A]' : 'mt-0.5 text-neutral-400 group-hover:text-neutral-200'} />
+      <span><span className="block text-sm font-medium text-neutral-100">{title}</span><span className="mt-1 block text-[11px] leading-relaxed text-neutral-400">{detail}</span></span>
+    </button>
+  );
+  return (
+    <Modal title={screen === 'comic' ? 'Create a comic project' : 'Create a workspace'} onClose={closeCreate} width={760} footer={screen === 'comic' ? <Btn onClick={() => setScreen('choices')}>Back to workspaces</Btn> : undefined}>
+      {screen === 'comic' ? <NewComicForm onCreated={closeCreate} /> : (
+        <div className="space-y-5">
+          <section>
+            <SectionTitle>Studios · create a separate editable project</SectionTitle>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {card('Draw', 'Create a layered 2D canvas with the standard Carbon brush and ink tools.', Brush, () => setApp({ dialog: 'new' }), true)}
+              {EDITION.windows && card('Comic Studio', 'Create a multi-page comic with page templates, panels, balloons and lettering.', MessageSquare, () => setScreen('comic'))}
+              {EDITION.windows && card('3D Studio', 'Create a new .carbon scene document. Spatial strokes, surfaces and camera views stay with this project.', Box, create3d)}
+            </div>
+          </section>
+          {EDITION.windows && (
+            <section>
+              <SectionTitle>Other supported workspaces</SectionTitle>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {card('Orbit Board', 'Organize reference images, notes and project links. Opens in the active project, or creates a blank project if none is open.', LayoutDashboard, createBoard)}
+                {card('Effects', 'Open the effects workspace for a Draw project; a blank drawing is created if needed.', Wand2, createEffects)}
+                {card('Brush Library', 'Browse the installed brush catalog and local packs. No document is required.', Sparkles, () => { setApp({ dialog: null, homeScreen: false }); switchWorkspace('library'); })}
+              </div>
+            </section>
+          )}
+          {!EDITION.windows && <p className="text-[11px] text-neutral-500">Android currently supports Draw workspace creation here. Windows-selected folders and Android document-provider storage remain separate workflows.</p>}
+        </div>
+      )}
+    </Modal>
+  );
+}
 
 function NewCanvas() {
   const [w, setW] = useState(2048);
@@ -76,7 +140,7 @@ function ExportDialog() {
         {type !== 'image/png' && <Slider label="Quality" value={q} min={0.3} max={1} onChange={setQ} />}
         <Select label="Scale" value={String(scale)} onChange={(v) => setScale(Number(v))} options={[0.25, 0.5, 1, 2, 3].map((s) => ({ value: String(s), label: `${s}× (${Math.round(d.width * s)}×${Math.round(d.height * s)})` }))} />
         {type !== 'image/jpeg' && <Toggle label="Keep transparency (omit transparent background)" checked={transparent} onChange={setTransparent} />}
-        <p className="text-[11px] text-neutral-500">Crisp Ink layers are rendered at the export resolution, so upscaled exports keep sharp line art. {tooBig && <span className="text-red-400">{tooBig}</span>}</p>
+        <p className="text-[11px] text-neutral-500">This flattens the visible artwork to PNG, JPEG or WebP; it does not contain editable layers or replay events. Save a .carbon project for editable artwork and Drawing Replay. Crisp Ink stays sharp when upscaled. {tooBig && <span className="text-red-400">{tooBig}</span>}</p>
       </div>
     </Modal>
   );
@@ -163,7 +227,7 @@ function SettingsDialog({ initialTab = 'interface' }: { initialTab?: string }) {
     <Modal title="Preferences" onClose={close} width={620}>
       <div className="flex gap-4">
         <div className="flex w-32 shrink-0 flex-col gap-1">
-          {[['interface', 'Interface'], ['input', 'Input & Gestures'], ['replay', 'Replay & Storage'], ...(isNative() ? [['android', 'Android']] : []), ...(EDITION.windows ? [['workspace', 'Canvas & Workspace']] : []), ['rail', 'Tool Rail'], ['shortcuts', 'Shortcuts']].map(([k, l]) => <Btn key={k} active={tab === k} onClick={() => setTab(k)} className="justify-start">{l}</Btn>)}
+          {[['interface', 'Interface'], ...(EDITION.windows ? [['home', 'Home scene']] : []), ['input', 'Input & Gestures'], ['replay', 'Replay & Storage'], ...(isNative() ? [['android', 'Android']] : []), ...(EDITION.windows ? [['workspace', 'Canvas & Workspace']] : []), ['rail', 'Tool Rail'], ['shortcuts', 'Shortcuts']].map(([k, l]) => <Btn key={k} active={tab === k} onClick={() => setTab(k)} className="justify-start">{l}</Btn>)}
         </div>
         <div className="min-w-0 flex-1 space-y-1">
           {tab === 'interface' && <>
@@ -172,8 +236,14 @@ function SettingsDialog({ initialTab = 'interface' }: { initialTab?: string }) {
             <Toggle label="Brush outline cursor" checked={s.brushOutline} onChange={(v) => apply({ brushOutline: v })} />
             <Slider label="Grid size" value={s.gridSize} min={8} max={512} step={8} fmt={(v) => v + 'px'} onChange={(v) => apply({ gridSize: v })} />
             <Toggle label="Restore previous session on launch" checked={s.restoreSession} onChange={(v) => apply({ restoreSession: v })} />
-            <Slider label="Autosave every" value={s.autosaveSec} min={10} max={300} step={5} fmt={(v) => v + 's'} onChange={(v) => apply({ autosaveSec: v })} />
+            <Slider label="Recovery sweep interval" value={s.autosaveSec} min={10} max={300} step={5} fmt={(v) => v + 's'} onChange={(v) => apply({ autosaveSec: v })} />
+            <p className="text-[10px] leading-relaxed text-neutral-500">Committed document edits also schedule a local IndexedDB recovery save after a short quiet period; this interval is the periodic fallback sweep.</p>
             <Slider label="Undo steps" value={s.undoLimit} min={10} max={200} step={5} fmt={(v) => String(v)} onChange={(v) => apply({ undoLimit: v })} />
+          </>}
+          {tab === 'home' && EDITION.windows && <>
+            <Toggle label="Show the Philippine coast scene on the home screen" checked={s.homeSceneEnabled} onChange={(v) => apply({ homeSceneEnabled: v })} />
+            <Toggle label="Animate waves and subtle camera drift" checked={s.homeSceneMotion} onChange={(v) => apply({ homeSceneMotion: v })} />
+            <p className="pt-2 text-[11px] leading-relaxed text-neutral-500">The coastal image is packaged locally and works offline. Disabling animation keeps a still frame; system reduced-motion preferences also disable movement. Turning the scene off leaves the home layout and actions in place.</p>
           </>}
           {tab === 'input' && <>
             <Toggle label="Stylus-only drawing (fingers pan / zoom)" checked={s.stylusOnly} onChange={(v) => apply({ stylusOnly: v })} />
@@ -184,10 +254,11 @@ function SettingsDialog({ initialTab = 'interface' }: { initialTab?: string }) {
             <p className="pt-2 text-[11px] leading-relaxed text-neutral-500">Two-finger drag pans, pinch zooms, twist rotates. Pressure and tilt are read from Pointer Events when the device and OS provide them. Palm rejection relies on the OS. Turn on stylus-only mode to ignore touch drawing completely.</p>
           </>}
           {tab === 'replay' && <>
-            <Toggle label="Record Drawing Replay for new documents" checked={s.recordByDefault} onChange={(v) => apply({ recordByDefault: v })} />
-            <Slider label="Storage limit / doc" value={s.replayLimitMB} min={20} max={1000} step={10} fmt={(v) => v + ' MB'} onChange={(v) => apply({ replayLimitMB: v })} />
-            <Slider label="Idle compression" value={s.idleCapSec} min={0.5} max={10} step={0.5} fmt={(v) => v + 's'} onChange={(v) => apply({ idleCapSec: v })} />
-            <p className="pt-2 text-[11px] leading-relaxed text-neutral-500">Pauses longer than the idle compression value are shortened in the replay timeline. When a document reaches its storage limit, recording pauses automatically and the artwork is unaffected. All recordings stay on this device.</p>
+            <Toggle label="Automatically record new drawings and opened projects without replay" checked={s.recordByDefault} onChange={(v) => apply({ recordByDefault: v })} />
+            <Slider label="Replay memory limit / project" value={s.replayLimitMB} min={20} max={1000} step={10} fmt={(v) => v + ' MB'} onChange={(v) => apply({ replayLimitMB: v })} />
+            <Toggle label="Shorten long pauses in Drawing Replay" checked={s.compressReplayPauses} onChange={(v) => apply({ compressReplayPauses: v })} />
+            {s.compressReplayPauses && <Slider label="Maximum replay pause" value={s.idleCapSec} min={0.5} max={10} step={0.5} fmt={(v) => v + 's'} onChange={(v) => apply({ idleCapSec: v })} />}
+            <p className="pt-2 text-[11px] leading-relaxed text-neutral-500">When this is off, new drawings and opened projects without replay history will not be captured automatically; use the per-document Replay panel to start capture. Existing per-document recording state is not silently cleared—pause or stop it there if needed. Drawing Replay keeps real time between operations unless you opt into pause shortening. It records no idle frames, cursor/hand movement, menus, screen, microphone or camera. At the estimated memory limit, recording pauses automatically. Replay data stays local in its project.</p>
           </>}
           {tab === 'workspace' && EDITION.windows && <ColorDockSettings />}
           {tab === 'android' && <>
@@ -269,10 +340,10 @@ assets/<id>              embedded imported images
 replay/events.json       { brushes:[…deduplicated…], events:[{t,c|u|m|cp}] }
 replay/cp/<n>/<id>.png   checkpoint layer pixels
 thumbnail.png            preview`}</pre>
-        <p><b>Safe save:</b> the archive is fully serialised and verified before anything is written. Where the File System Access API is available, writes go to a swap file that replaces the original only when it closes successfully. Otherwise a new file is downloaded. A local backup copy is also kept. Autosave writes every open document to IndexedDB for crash recovery.</p>
+        <p><b>Safe save:</b> the archive is fully serialised and verified before anything is written. Where the File System Access API is available, writes go to a swap file that replaces the original only when it closes successfully. Otherwise a new file is downloaded. A local backup copy is also kept. Changed documents are autosaved to IndexedDB shortly after committed edits, with periodic and app-lifecycle recovery sweeps.</p>
         <SectionTitle>Platform note</SectionTitle>
         <p><b>Android:</b> the same build ships as an APK in a Capacitor 8 shell (see docs/ANDROID.md). It saves projects natively to Documents/CARBON, exports through the share sheet, handles the back button, autosaves in the background and has automatic palm rejection. {isNative() ? 'You are running the Android edition.' : ''}</p>
-        <p>This build of CARBON 1.0 is a web application. It runs offline in desktop browsers on Windows and on Android tablets (Chrome), and no account is required. The engine sits behind platform adapters (file access, input, storage), which leaves room for future native packaging.</p>
+        <p>{APP_LABEL} is a local-first application. It runs offline in desktop browsers on Windows and on Android tablets (Chrome), and no account is required. The engine sits behind platform adapters (file access, input, storage), which leaves room for future native packaging.</p>
       </div>
     </Modal>
   );
@@ -298,7 +369,7 @@ function Space() {
 
 function About() {
   return (
-    <Modal title="About CARBON" onClose={close} width={460}>
+    <Modal title="About Carbon: Prime" onClose={close} width={460}>
       <div className="flex flex-col items-center gap-4 py-2 text-center">
         <CarbonLockup />
         <div className="flex items-end gap-4 text-neutral-500">
@@ -307,7 +378,7 @@ function About() {
           <CarbonMark size={36} mono className="text-neutral-300" />
           <CarbonMark size={18} />
         </div>
-        <p className="text-xs text-neutral-400">{APP_LABEL} · {EDITION.windows ? 'Windows edition · drawing, illustration, comic & 3D studio' : 'Professional 2D drawing & illustration studio'}</p>
+        <p className="text-xs text-neutral-400">{APP_LABEL} · {EDITION.windows ? 'Windows edition · drawing, painting, comic, 3D & illustration studio' : 'Professional 2D drawing & illustration studio'}</p>
         {EDITION.windows && (
           <div className="flex gap-2">
             <span className="rounded bg-white/5 px-2 py-0.5 font-mono text-[10px] text-neutral-400">version {APP_VERSION}</span>
@@ -315,7 +386,27 @@ function About() {
           </div>
         )}
         <p className="text-[11px] leading-relaxed text-neutral-500">Works fully offline. Your artwork, recordings and settings stay on this device. There is no telemetry, no account and no cloud dependency.</p>
+        <div className="flex items-center justify-center gap-2">
+          <p className="text-[11px] text-neutral-400">{ABOUT_CREATOR}</p>
+          <button
+            type="button"
+            onClick={() => setApp({ dialog: 'projectInfo' })}
+            className="rounded-md p-1.5 text-neutral-400 transition hover:bg-white/10 hover:text-white"
+            title="Open About / Project Information"
+            aria-label="Open About / Project Information"
+          >
+            <FolderOpen size={15} />
+          </button>
+        </div>
       </div>
+    </Modal>
+  );
+}
+
+function ProjectInformation() {
+  return (
+    <Modal title="About / Project Information" onClose={close} width={640}>
+      <p className="whitespace-pre-wrap text-left text-[13px] leading-relaxed text-neutral-200">{ABOUT_PROJECT_COPY}</p>
     </Modal>
   );
 }
@@ -324,11 +415,16 @@ export default function Dialogs() {
   const dialog = useApp((s) => s.dialog);
   switch (dialog) {
     case 'new': return <NewCanvas />;
+    case 'create': return <CreateDialog />;
     case 'export': return <ExportDialog />;
     case 'canvasSize': return <SizeDialog mode="canvas" />;
     case 'imageSize': return <SizeDialog mode="image" />;
     case 'settings': return <SettingsDialog />;
+    case 'settingsHome': return EDITION.windows ? <SettingsDialog initialTab="home" /> : <SettingsDialog />;
     case 'shortcuts': return <SettingsDialog initialTab="shortcuts" />;
+    case 'commandPalette': return <CommandPalette />;
+    case 'quickStart': return <QuickStartDialog />;
+    case 'projects': return <MyIllustrationsDialog />;
     case 'colorDock': return EDITION.windows ? <SettingsDialog initialTab="workspace" /> : null;
     case 'patches': return EDITION.windows ? <PatchesDialog /> : null;
     case 'fusion': return EDITION.windows ? <BrushFusionDialog /> : null;
@@ -336,6 +432,7 @@ export default function Dialogs() {
     case 'docs': return <Docs />;
     case 'space': return <Space />;
     case 'about': return <About />;
+    case 'projectInfo': return <ProjectInformation />;
     default: return null;
   }
 }

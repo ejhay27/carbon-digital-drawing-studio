@@ -1,29 +1,42 @@
 import { checkDims, DocEngine, MAX_AREA, MAX_SIDE } from '../engine/document';
 import { isNative, shareProjectFile, writeProject } from '../platform/native';
-import { deserializeDoc, MIME, serializeDoc, verifyBytes } from '../engine/fileFormat';
+import { COMIC_MIME, deserializeDoc, isComicArchive, MIME, serializeComic, serializeDoc, verifyBytes } from '../engine/fileFormat';
 import { compositeDoc, renderDoc } from '../engine/render';
 import { ReplayPlayer } from '../engine/replay';
 import { idbAll, idbDel, idbGet, idbPut, type RecentEntry, type SessionEntry } from '../engine/persist';
 import { blobToDataURL, canvasToBlob, createCanvas, ctxOf, download, loadImage, uid } from '../engine/util';
 import { activeDoc, bump, confirmDialog, getApp, promptDialog, setApp, showPanel, toast } from './store';
+import { defaultScene } from '../win/sceneRender';
 
 const autosavedRev = new WeakMap<DocEngine, number>(); // last autosaved revision per document
 const unsubs = new Map<string, () => void>();
+let autosaving = false;
+let autosaveRequested = false;
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleAutosave(delay = 1200) {
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    autosaveTimer = null;
+    void autosaveAll();
+  }, delay);
+}
 
 export function configureDoc(doc: DocEngine) {
   const s = getApp().settings;
   doc.undoLimit = s.undoLimit;
   doc.undoBytes = isNative() ? 320 * 1024 * 1024 : 900 * 1024 * 1024; // mobile WebView memory budget
-  doc.rec.idleCap = s.idleCapSec * 1000;
+  doc.rec.idleCap = s.compressReplayPauses ? s.idleCapSec * 1000 : Number.MAX_SAFE_INTEGER;
   doc.rec.limitBytes = s.replayLimitMB * 1024 * 1024;
-  doc.rec.onLimit = () => toast(`Replay storage limit (${s.replayLimitMB} MB) reached for "${doc.name}". Recording paused.`, 'error');
+  doc.rec.onLimit = () => toast(`Estimated replay memory limit (${s.replayLimitMB} MB) reached for "${doc.name}". Recording paused.`, 'error');
 }
 
 export function addDoc(doc: DocEngine, record?: boolean) {
   configureDoc(doc);
   if ((record ?? getApp().settings.recordByDefault) && !doc.rec.events.length) doc.startRecording();
-  unsubs.set(doc.id, doc.subscribe(() => bump()));
-  setApp({ docs: [...getApp().docs, doc], activeId: doc.id, replay: null });
+  unsubs.set(doc.id, doc.subscribe(() => { bump(); scheduleAutosave(); }));
+  setApp({ docs: [...getApp().docs, doc], activeId: doc.id, replay: null, homeScreen: false });
+  scheduleAutosave();
 }
 
 export function newDocument(w: number, h: number, name = 'Untitled', background: string | null = '#ffffff') {
@@ -38,13 +51,23 @@ export function newDocument(w: number, h: number, name = 'Untitled', background:
   return doc;
 }
 
+/** Create an independent 3D document; its scene extension is never attached to a Draw tab by accident. */
+export function new3DDocument(name = 'Untitled 3D') {
+  const doc = newDocument(1600, 1200, name);
+  if (!doc) return null;
+  doc.scene3d = defaultScene();
+  doc.dirty = true;
+  doc.emit();
+  return doc;
+}
+
 export async function openBytes(bytes: Uint8Array, fileName: string, handle: unknown = null) {
   try {
     const doc = await deserializeDoc(bytes);
     doc.fileName = fileName;
     doc.fileHandle = handle;
     doc.name = fileName.replace(/\.carbon$/i, '') || doc.name;
-    addDoc(doc, false);
+    addDoc(doc);
     await addRecent(doc, bytes);
     toast(`Opened ${fileName}${doc.rec.events.length ? ` · replay: ${doc.rec.events.length} events` : ''}`, 'success');
     return doc;
@@ -55,7 +78,7 @@ export async function openBytes(bytes: Uint8Array, fileName: string, handle: unk
 }
 
 async function handleOpenedFile(file: File, handle: unknown = null) {
-  if (/\.carboncomic$/i.test(file.name)) return openComicFile(file);
+  if (/\.carboncomic$/i.test(file.name)) return openComicFile(file, handle);
   if (/\.carbon$/i.test(file.name) || file.type === MIME) {
     return openBytes(new Uint8Array(await file.arrayBuffer()), file.name, handle);
   }
@@ -69,7 +92,7 @@ export async function openFileDialog() {
   if (w.showOpenFilePicker) {
     try {
       const [h] = await w.showOpenFilePicker({
-        types: [{ description: 'CARBON project or image', accept: { 'application/x-carbon': ['.carbon'], 'image/*': ['.png', '.jpg', '.jpeg', '.webp'] } }],
+        types: [{ description: 'CARBON project, comic or image', accept: { [MIME]: ['.carbon'], [COMIC_MIME]: ['.carboncomic'], 'image/*': ['.png', '.jpg', '.jpeg', '.webp'] } }],
       });
       const f = await h.getFile();
       return handleOpenedFile(f, /\.carbon$/i.test(f.name) ? h : null);
@@ -83,7 +106,7 @@ export async function openFileDialog() {
 }
 
 /** Open a multi-page Comic Studio project (.carboncomic). Each page becomes an editable document. */
-export async function openComicFile(file: File) {
+export async function openComicFile(file: File, handle: unknown = null) {
   try {
     const { deserializeComic } = await import('../engine/fileFormat');
     const { name, pages } = await deserializeComic(new Uint8Array(await file.arrayBuffer()));
@@ -91,7 +114,8 @@ export async function openComicFile(file: File) {
     pages.forEach((p, i) => {
       p.comic = { ...(p.comic || { bleed: 0, safe: 0, pageName: `Page ${i + 1}` }), id: cid, name, index: i } as NonNullable<DocEngine['comic']>;
       p.dirty = false;
-      addDoc(p, false);
+      if (i === 0) { p.fileHandle = handle; p.fileName = file.name; }
+      addDoc(p);
     });
     setApp({ activeId: pages[0].id });
     toast(`Opened comic “${name}” (${pages.length} pages)`, 'success');
@@ -118,10 +142,12 @@ type Handle = { name: string; createWritable: () => Promise<{ write: (b: Uint8Ar
 
 export async function saveDoc(doc: DocEngine, mode: 'save' | 'saveAs' | 'copy' = 'save'): Promise<boolean> {
   try {
+    const revision = doc.rev;
     const bytes = await serializeDoc(doc);
     verifyBytes(bytes); // never write an archive that fails validation
+    if (doc.rev !== revision) throw new Error('The document changed while the save was being prepared. Save again to include the latest edits.');
     const suggested = safeName(doc.name) + (mode === 'copy' ? ' copy' : '') + '.carbon';
-    if (isNative()) return await saveNative(doc, bytes, mode, suggested);
+    if (isNative()) return await saveNative(doc, bytes, mode, suggested, revision);
     let handle: Handle | null = mode === 'save' ? (doc.fileHandle as Handle | null) : null;
     const w = window as unknown as { showSaveFilePicker?: (o: unknown) => Promise<Handle> };
     if (!handle && w.showSaveFilePicker) {
@@ -150,6 +176,10 @@ export async function saveDoc(doc: DocEngine, mode: 'save' | 'saveAs' | 'copy' =
       download(new Blob([bytes as BlobPart], { type: MIME }), suggested);
       if (mode !== 'copy') doc.fileName = suggested;
     }
+    if (mode !== 'copy' && doc.rev !== revision) {
+      toast('The project file was saved, but newer edits arrived during the write. Your document remains unsaved.', 'error');
+      return false;
+    }
     if (mode !== 'copy') {
       doc.dirty = false;
       doc.emit();
@@ -167,7 +197,7 @@ export async function saveDoc(doc: DocEngine, mode: 'save' | 'saveAs' | 'copy' =
 interface NativeHandle { native: true; name: string }
 
 /** Android: projects are written (via temp file + verify + replace) to Documents/CARBON. */
-async function saveNative(doc: DocEngine, bytes: Uint8Array, mode: 'save' | 'saveAs' | 'copy', suggested: string): Promise<boolean> {
+async function saveNative(doc: DocEngine, bytes: Uint8Array, mode: 'save' | 'saveAs' | 'copy', suggested: string, revision: number): Promise<boolean> {
   const existing = doc.fileHandle as NativeHandle | null;
   let name = mode === 'save' && existing?.native ? existing.name : null;
   if (!name) {
@@ -180,6 +210,12 @@ async function saveNative(doc: DocEngine, bytes: Uint8Array, mode: 'save' | 'sav
     doc.fileHandle = { native: true, name } as NativeHandle;
     doc.fileName = name;
     doc.name = name.replace(/\.carbon$/i, '');
+  }
+  if (mode !== 'copy' && doc.rev !== revision) {
+    toast('The project file was saved, but newer edits arrived during the write. Your document remains unsaved.', 'error');
+    return false;
+  }
+  if (mode !== 'copy') {
     doc.dirty = false;
     doc.emit();
   }
@@ -187,6 +223,119 @@ async function saveNative(doc: DocEngine, bytes: Uint8Array, mode: 'save' | 'sav
   await idbPut('backup', doc.id, { name: doc.name, bytes, savedAt: Date.now() }).catch(() => {});
   toast(`Saved ${path} (${(bytes.length / 1024 / 1024).toFixed(2)} MB)`, 'success');
   return true;
+}
+
+/** Save every page of a Comic Studio project as one validated .carboncomic file. */
+export async function saveComicProject(doc: DocEngine, mode: 'save' | 'saveAs' | 'copy' = 'save'): Promise<boolean> {
+  if (!doc.comic) return false;
+  const pages = getApp().docs.filter((page) => page.comic?.id === doc.comic!.id).sort((a, b) => a.comic!.index - b.comic!.index);
+  if (!pages.length) return false;
+  const title = pages[0].comic!.name || 'Comic';
+  const suggested = safeName(title) + (mode === 'copy' ? ' copy' : '') + '.carboncomic';
+  const revisions = pages.map((page) => [page, page.rev] as const);
+  try {
+    const bytes = await serializeComic(title, pages);
+    if (!isComicArchive(bytes)) throw new Error('The comic archive did not pass its integrity check.');
+    if (revisions.some(([page, rev]) => page.rev !== rev)) throw new Error('A page changed while the comic was being prepared. Save again to include the latest edits.');
+
+    const root = pages[0];
+    if (isNative()) {
+      const existing = root.fileHandle as NativeHandle | null;
+      let name = mode === 'save' && existing?.native ? existing.name : null;
+      if (!name) {
+        const entered = await promptDialog(mode === 'copy' ? 'Save a comic copy' : 'Save comic project', 'File name (saved to the CARBON folder on this device):', suggested.replace(/\.carboncomic$/i, ''));
+        if (entered === null) return false;
+        name = safeName(entered).replace(/(\.carboncomic)?$/i, '.carboncomic');
+      }
+      const { path } = await writeProject(name, bytes);
+      if (mode !== 'copy') {
+        root.fileHandle = { native: true, name } as NativeHandle;
+        pages.forEach((page) => { page.fileName = name!; });
+      }
+      if (revisions.some(([page, rev]) => page.rev !== rev)) {
+        toast('The comic file was saved, but a page changed during the write. Your open pages remain marked unsaved.', 'error');
+        return false;
+      }
+      if (mode !== 'copy') pages.forEach((page) => { page.dirty = false; page.emit(); });
+      if (mode !== 'copy') {
+        await addRecent(root, bytes).catch(() => {});
+        await idbPut('backup', root.id, { name: title, bytes, savedAt: Date.now() }).catch(() => {});
+      }
+      toast(`Saved ${path} (${pages.length} pages, ${(bytes.length / 1048576).toFixed(2)} MB)`, 'success');
+      return true;
+    }
+
+    let handle: Handle | null = mode === 'save' ? (root.fileHandle as Handle | null) : null;
+    const w = window as unknown as { showSaveFilePicker?: (o: unknown) => Promise<Handle> };
+    if (!handle && w.showSaveFilePicker) {
+      try {
+        handle = await w.showSaveFilePicker({ suggestedName: suggested, types: [{ description: 'CARBON Comic Project', accept: { [COMIC_MIME]: ['.carboncomic'] } }] });
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') return false;
+        handle = null;
+      }
+    }
+    if (handle) {
+      const writable = await handle.createWritable();
+      try { await writable.write(bytes); await writable.close(); }
+      catch (e) { try { await writable.abort?.(); } catch { /* ignore */ } throw e; }
+      if (mode !== 'copy') {
+        root.fileHandle = handle;
+        pages.forEach((page) => { page.fileName = handle!.name; });
+      }
+    } else {
+      download(new Blob([bytes as BlobPart], { type: COMIC_MIME }), suggested);
+      if (mode !== 'copy') pages.forEach((page) => { page.fileName = suggested; });
+    }
+    if (revisions.some(([page, rev]) => page.rev !== rev)) {
+      toast('The comic file was saved, but a page changed during the write. Your open pages remain marked unsaved.', 'error');
+      return false;
+    }
+    if (mode !== 'copy') pages.forEach((page) => { page.dirty = false; page.emit(); });
+    if (mode !== 'copy') {
+      await addRecent(root, bytes).catch(() => {});
+      await idbPut('backup', root.id, { name: title, bytes, savedAt: Date.now() }).catch(() => {});
+    }
+    toast(`${mode === 'copy' ? 'Saved a copy of' : 'Saved'} comic “${title}” (${pages.length} pages, ${(bytes.length / 1048576).toFixed(2)} MB)`, 'success');
+    return true;
+  } catch (e) {
+    toast(`Comic save failed: ${e instanceof Error ? e.message : e}. Your previous file was not modified.`, 'error');
+    return false;
+  }
+}
+
+/** Route Save/Save As to the correct project container for the active document type. */
+export async function saveActiveDocument(mode: 'save' | 'saveAs' | 'copy' = 'save'): Promise<boolean> {
+  const doc = activeDoc();
+  if (!doc) return false;
+  return doc.comic ? saveComicProject(doc, mode) : saveDoc(doc, mode);
+}
+
+let homeNavigationInFlight = false;
+/** Save dirty work first; cancellation or failure leaves the editor and every open document intact. */
+export async function navigateHomeSafely(saveCurrent: () => Promise<boolean> = () => saveActiveDocument('save')) {
+  if (homeNavigationInFlight || getApp().homeSaving) return false;
+  const doc = activeDoc();
+  if (!doc) { setApp({ homeScreen: true, canvasOnly: false }); return true; }
+  const dirty = doc.comic
+    ? getApp().docs.some((page) => page.comic?.id === doc.comic!.id && page.dirty)
+    : doc.dirty;
+  if (!dirty) { setApp({ homeScreen: true, canvasOnly: false, dialog: null }); return true; }
+
+  homeNavigationInFlight = true;
+  setApp({ homeSaving: true });
+  try {
+    const saved = await saveCurrent();
+    if (!saved) {
+      toast('Home was not opened; the save was canceled or did not finish. Your artwork is still open.', 'info');
+      return false;
+    }
+    setApp({ homeScreen: true, canvasOnly: false, dialog: null });
+    return true;
+  } finally {
+    homeNavigationInFlight = false;
+    setApp({ homeSaving: false });
+  }
 }
 
 export async function shareProject(doc: DocEngine) {
@@ -203,21 +352,34 @@ export async function closeDoc(id: string, force = false) {
   const s = getApp();
   const doc = s.docs.find((d) => d.id === id);
   if (!doc) return true;
-  if (doc.dirty && !force) {
-    const r = await confirmDialog('Save changes?', `“${doc.name}” has unsaved changes. Save before closing?`, [
+  // A Comic Studio project is one multi-page file; closing one tab closes the project group.
+  // The explicit Delete Page action passes force=true and removes only that confirmed page.
+  const comicPages = doc.comic ? s.docs.filter((page) => page.comic?.id === doc.comic!.id).sort((a, b) => a.comic!.index - b.comic!.index) : [];
+  const group = !force && doc.comic ? comicPages : [doc];
+  if (force && doc.comic && comicPages[0]?.id === doc.id && comicPages[1]) {
+    comicPages[1].fileHandle = doc.fileHandle;
+    comicPages[1].fileName = doc.fileName;
+  }
+  if (!force && group.some((page) => page.dirty)) {
+    const isComic = !!doc.comic;
+    const r = await confirmDialog(isComic ? 'Save comic changes?' : 'Save changes?', isComic
+      ? `Comic “${doc.comic!.name}” has unsaved changes across ${group.length} page${group.length === 1 ? '' : 's'}. Save the complete .carboncomic project before closing?`
+      : `“${doc.name}” has unsaved changes. Save before closing?`, [
       { label: 'Cancel', value: 'cancel' },
       { label: "Don't save", value: 'discard', variant: 'danger' },
       { label: 'Save', value: 'save', variant: 'primary' },
     ]);
     if (r === 'cancel') return false;
-    if (r === 'save' && !(await saveDoc(doc))) return false;
+    if (r === 'save' && !(await (isComic ? saveComicProject(doc, 'save') : saveDoc(doc)))) return false;
   }
-  unsubs.get(id)?.();
-  unsubs.delete(id);
-  const docs = getApp().docs.filter((d) => d.id !== id);
-  const idx = s.docs.findIndex((d) => d.id === id);
-  setApp({ docs, activeId: s.activeId === id ? docs[Math.min(idx, docs.length - 1)]?.id || null : s.activeId, replay: s.replay?.docId === id ? null : s.replay });
-  idbDel('session', id).catch(() => {});
+  const ids = new Set(group.map((page) => page.id));
+  ids.forEach((docId) => { unsubs.get(docId)?.(); unsubs.delete(docId); });
+  const docs = s.docs.filter((page) => !ids.has(page.id));
+  const activeRemoved = s.activeId !== null && ids.has(s.activeId);
+  const activeIndex = s.docs.findIndex((page) => page.id === s.activeId);
+  const fallback = activeRemoved ? docs[Math.min(Math.max(activeIndex, 0), docs.length - 1)]?.id || null : s.activeId;
+  setApp({ docs, activeId: fallback, replay: s.replay && ids.has(s.replay.docId) ? null : s.replay, homeScreen: docs.length === 0 ? false : s.homeScreen });
+  ids.forEach((docId) => { idbDel('session', docId).catch(() => {}); });
   return true;
 }
 
@@ -229,7 +391,7 @@ export async function duplicateDoc(doc: DocEngine) {
   d.meta.lineage = '';
   d.meta.branch = '';
   d.dirty = true;
-  addDoc(d, false);
+  addDoc(d);
 }
 
 export async function exportImage(doc: DocEngine, type: 'image/png' | 'image/jpeg' | 'image/webp', quality: number, scale: number, transparent: boolean) {
@@ -302,32 +464,41 @@ export async function listRecent() {
   const all = await idbAll<RecentEntry>('recent').catch(() => []);
   return all.sort((a, b) => b.value.savedAt - a.value.savedAt);
 }
-export async function openRecent(key: string) {
+export async function openRecent(key: string): Promise<DocEngine | null> {
   const e = await idbGet<RecentEntry>('recent', key);
-  if (!e) return toast('Recent document is no longer available.', 'error');
+  if (!e) { toast('Recent document is no longer available.', 'error'); return null; }
   const existing = getApp().docs.find((d) => (d.fileName || d.name) === key);
-  if (existing) return setApp({ activeId: existing.id });
-  await openBytes(e.bytes, key);
+  if (existing) { setApp({ activeId: existing.id }); return existing; }
+  return openBytes(e.bytes, key);
 }
 
-let autosaving = false;
 export async function autosaveAll(force = false) {
-  if (autosaving) return;
+  if (autosaving) { autosaveRequested = true; return; }
   autosaving = true;
+  let failed = false;
   try {
-    const docs = getApp().docs;
-    for (let i = 0; i < docs.length; i++) {
-      const d = docs[i];
-      if (!force && autosavedRev.get(d) === d.rev) continue;
+    const docs = getApp().docs.slice();
+    for (const d of docs) {
+      const revision = d.rev;
+      if (!force && autosavedRev.get(d) === revision) continue;
       const bytes = await serializeDoc(d);
-      await idbPut('session', d.id, { name: d.name, bytes, savedAt: Date.now(), fileName: d.fileName, order: i, dirty: d.dirty } as SessionEntry & { dirty: boolean });
-      autosavedRev.set(d, d.rev);
+      const order = getApp().docs.indexOf(d);
+      if (order < 0) continue;
+      await idbPut('session', d.id, { name: d.name, bytes, savedAt: Date.now(), fileName: d.fileName, order, dirty: d.dirty } as SessionEntry & { dirty: boolean });
+      // Mark only the revision we serialized; a newer edit during PNG/ZIP encoding gets another pass.
+      autosavedRev.set(d, revision);
+      if (d.rev !== revision) autosaveRequested = true;
     }
   } catch (e) {
+    failed = true;
     console.warn('autosave failed', e);
     toast('Autosave failed: ' + (e instanceof Error ? e.message : e), 'error');
   } finally {
     autosaving = false;
+    if (autosaveRequested) {
+      autosaveRequested = false;
+      if (!failed) scheduleAutosave(500);
+    }
   }
 }
 
@@ -346,8 +517,7 @@ export async function restoreSession() {
       doc.name = e.value.name;
       doc.fileName = e.value.fileName;
       doc.dirty = !!e.value.dirty;
-      addDoc(doc, false);
-      autosavedRev.set(doc, doc.rev);
+      addDoc(doc);
       n++;
     } catch (err) {
       toast(`Could not recover “${e.value.name}”: ${err instanceof Error ? err.message : err}`, 'error');
@@ -381,7 +551,7 @@ export function closeReplay() {
 export async function exportReplayVideo(doc: DocEngine, speed: number, onProgress: (p: number) => void, cancel: { cancelled: boolean }) {
   if (typeof MediaRecorder === 'undefined') throw new Error('Video recording is not supported on this platform.');
   const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'].find((m) => MediaRecorder.isTypeSupported(m));
-  if (!mime) throw new Error('No supported video codec.');
+  if (!mime) throw new Error('No supported WebM or MP4 video codec.');
   const player = new ReplayPlayer(doc);
   await player.prepare();
   const sc = Math.min(1, 1280 / Math.max(doc.width, doc.height));
@@ -389,36 +559,53 @@ export async function exportReplayVideo(doc: DocEngine, speed: number, onProgres
   const c = createCanvas(W, H);
   const ctx = ctxOf(c);
   const eff = Math.max(speed, player.duration / 90000);
+  if (typeof c.captureStream !== 'function') throw new Error('Canvas video capture is not supported on this platform.');
   const stream = c.captureStream(30);
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
-  const chunks: Blob[] = [];
-  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-  const draw = () => {
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, W, H);
-    const g = player.engine;
-    renderDoc(ctx, g, [W / g.width, 0, 0, H / g.height, 0, 0], W, H, { bg: true });
-  };
-  draw();
-  rec.start(250);
-  const t0 = performance.now();
-  await new Promise<void>((resolve) => {
-    const step = () => {
-      if (cancel.cancelled) return resolve();
-      const t = (performance.now() - t0) * eff;
-      player.seek(Math.min(t, player.duration));
-      draw();
-      onProgress(Math.min(1, t / Math.max(1, player.duration)));
-      if (t >= player.duration) setTimeout(resolve, 1500);
-      else setTimeout(step, 1000 / 30);
+  try {
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
+    const outputMime = (rec.mimeType || mime).split(';')[0].toLowerCase();
+    if (outputMime !== 'video/webm' && outputMime !== 'video/mp4') throw new Error(`Unsupported video output type: ${outputMime || 'unknown'}.`);
+    const chunks: Blob[] = [];
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    let encoderError: Error | null = null;
+    const done = new Promise<void>((resolve) => {
+      rec.onstop = () => resolve();
+      rec.onerror = (event) => {
+        encoderError = (event as Event & { error?: DOMException }).error || new Error('The video encoder failed.');
+        try { if (rec.state !== 'inactive') rec.stop(); } catch { resolve(); }
+      };
+    });
+    const draw = () => {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, W, H);
+      const g = player.engine;
+      renderDoc(ctx, g, [W / g.width, 0, 0, H / g.height, 0, 0], W, H, { bg: true });
     };
-    step();
-  });
-  const done = new Promise<void>((r) => (rec.onstop = () => r()));
-  rec.stop();
-  await done;
-  if (cancel.cancelled) return;
-  const blob = new Blob(chunks, { type: mime.split(';')[0] });
-  download(blob, `${safeName(doc.name)}-replay.${mime.includes('mp4') ? 'mp4' : 'webm'}`);
-  toast('Replay video exported', 'success');
+    draw();
+    rec.start(250);
+    const t0 = performance.now();
+    await new Promise<void>((resolve) => {
+      const step = () => {
+        if (cancel.cancelled || encoderError) return resolve();
+        const t = (performance.now() - t0) * eff;
+        player.seek(Math.min(t, player.duration));
+        draw();
+        onProgress(Math.min(1, t / Math.max(1, player.duration)));
+        if (t >= player.duration) setTimeout(resolve, 1500);
+        else setTimeout(step, 1000 / 30);
+      };
+      step();
+    });
+    if (rec.state !== 'inactive') rec.stop();
+    await done;
+    if (encoderError) throw encoderError;
+    if (cancel.cancelled) return;
+    const actualMime = (chunks.find((chunk) => chunk.type)?.type || outputMime).split(';')[0].toLowerCase();
+    if (actualMime !== 'video/webm' && actualMime !== 'video/mp4') throw new Error(`The encoder returned an unsupported video type: ${actualMime || 'unknown'}.`);
+    const ext = actualMime === 'video/mp4' ? 'mp4' : 'webm';
+    download(new Blob(chunks, { type: actualMime }), `${safeName(doc.name)}-replay.${ext}`);
+    toast(`Replay ${ext.toUpperCase()} video exported`, 'success');
+  } finally {
+    stream.getTracks().forEach((track) => track.stop());
+  }
 }

@@ -3,6 +3,9 @@ import { Circle, PanelRight, Plus, X } from 'lucide-react';
 import { activeDoc, ALL_TOOLS, currentBrush, getApp, setApp, setTool, updateLayout, useApp, usePointer } from '../state/store';
 import { closeDoc, openReplay } from '../state/actions';
 import { fitView, prettyCombo, setZoom } from '../state/commands';
+import { EDITION } from '../platform/edition';
+import { setWin } from '../win/WinOverlay';
+import { documentWorkspace } from '../win/workspaceModel';
 import { TOOL_ICONS } from './Brand';
 import { Btn } from './ui';
 import { cn } from '../utils/cn';
@@ -16,7 +19,7 @@ export function DocTabs() {
       {docs.map((d) => (
         <div
           key={d.id}
-          onClick={() => setApp({ activeId: d.id, replay: getApp().replay?.docId === d.id ? getApp().replay : null, inkSelection: [] })}
+          onClick={() => { const target = documentWorkspace(d); setApp({ activeId: d.id, replay: getApp().replay?.docId === d.id ? getApp().replay : null, inkSelection: [], homeScreen: false, ...(target !== 'comic' && getApp().tool === 'comic' ? { tool: 'brush' as const } : {}) }); setWin({ workspace: target }); }}
           onAuxClick={(e) => e.button === 1 && closeDoc(d.id)}
           className={cn('group flex h-7 max-w-[220px] cursor-pointer items-center gap-2 rounded-t-md px-3 text-[11px]', d.id === activeId ? 'bg-[#1b1b1e] text-neutral-100' : 'text-neutral-500 hover:bg-white/5 hover:text-neutral-300')}
           title={`${d.name} — ${d.width}×${d.height}${d.fileName ? ' — ' + d.fileName : ''}`}
@@ -27,7 +30,7 @@ export function DocTabs() {
           <button onClick={(e) => { e.stopPropagation(); closeDoc(d.id); }} className="shrink-0 rounded p-0.5 text-neutral-500 opacity-60 hover:bg-white/10 hover:text-white group-hover:opacity-100" title="Close"><X size={11} /></button>
         </div>
       ))}
-      <button onClick={() => setApp({ dialog: 'new' })} className="mb-0.5 ml-1 rounded p-1 text-neutral-500 hover:bg-white/10 hover:text-white" title="New canvas"><Plus size={14} /></button>
+      <button onClick={() => setApp({ dialog: EDITION.windows ? 'create' : 'new' })} className="mb-0.5 ml-1 rounded p-1 text-neutral-500 hover:bg-white/10 hover:text-white" title={EDITION.windows ? 'Create a workspace' : 'New canvas'}><Plus size={14} /></button>
     </div>
   );
 }

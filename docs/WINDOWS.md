@@ -1,4 +1,20 @@
-# CARBON for Windows: version 2.2.0
+# CARBON for Windows
+
+## Current source candidate: Carbon: Prime 7.7.2+ls
+
+The Windows/desktop source identity remains **Carbon: Prime 7.x+ls** (`+ls` = Local Storage).
+`7.7.2+ls` is the unpublished Windows/desktop source candidate. It centralizes workspace creation,
+routes Draw/Comic/3D by document type, adds pressure-sensitive Carbon-brush ribbons and mesh-local
+surface stroke storage in 3D Studio, restores the locally animated Philippine-coast hero, and waits
+for a successful active-project save before Home navigation. Android remains **CARBON 1.0.0**;
+its `versionName` and `versionCode` are not driven by this Windows bump. Node tests, strict
+TypeScript and the web build pass; browser visuals, in-app diagnostics, Windows installer/runtime
+and Android acceptance remain unverified. See [`AUDIT-7.7.2-candidate.md`](./AUDIT-7.7.2-candidate.md)
+for scope and [`PRIME-7.md`](./PRIME-7.md) for version history.
+
+---
+
+## Previous release: 2.2.0
 
 The Windows edition is the full connected studio: **Draw · Comic Studio · 3D Studio (Spatial Ink Lab) · Effects · Orbit Board · Brush Library**, plus Color Dock, Palette Memory, Continuum links and the Creative Time Machine.
 The Android edition is a separate 1.0.0 line. **No Android project file, configuration, asset, version field or artifact was modified.** Windows-only features are gated by `EDITION.windows` in shared code.
@@ -16,7 +32,7 @@ node scripts/windows.mjs --source     # + release/windows/CARBON-<version>-sourc
 * **Portable:** open `CARBON-portable/CARBON.html` in Edge or Chrome. It works offline. Edge → … → Apps → *Install this site as an app* gives it its own window.
 * Before writing a new portable build, the script moves the existing one to `release/windows/previous/CARBON-portable-<old version>/`.
 * The script reads its version from `src/version.ts` and refuses to package if the release notes don't start at that version. It never touches `android/`, `capacitor.config.json`, `assets/` or `scripts/android.mjs`.
-* **Acceptance tests:** *Help → Run Diagnostics* runs the core suite, the `[Win]` suite and the new `[Win 2.2]` suite inside the running app.
+* **Acceptance tests:** *Help → Run Diagnostics* runs the core suite, `[Win]`, `[Win 2.2]` and `[Win 7.1]` finder/palette/sample/surface-symmetry checks. These are source paths; this browser-based diagnostics suite has not yet been executed for the current candidate.
 
 ## Architecture (what was reused)
 
@@ -111,7 +127,7 @@ node scripts/windows.mjs --source     # + release/windows/CARBON-<version>-sourc
 
 ## Known limitations
 * Drawing Replay doesn't record 3D Studio or Orbit Board edits; both have their own undo.
-* Symmetry isn't applied to surface strokes.
+* In the 7.1.0+ls source candidate, mirror/radial symmetry is projected onto mesh surfaces for freehand and straight-line strokes; Bézier anchors remain plane-only. Browser/WebGL interaction and target-platform acceptance are still unverified (see `AUDIT-7.1.0+ls.md`).
 * Filters run on the main thread when applied (previews are reduced-size).
 * Recapture needs the scene's document open.
 * Time Machine history lives in the browser profile (IndexedDB), not inside the .carbon file.
