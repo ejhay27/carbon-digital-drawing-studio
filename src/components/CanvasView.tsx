@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { BrushParams, InkStroke, Rect, Symmetry } from '../engine/types';
 import { StrokeRenderer } from '../engine/strokeRenderer';
+import { appendRecordedSample } from '../engine/recording';
 import { renderDoc, samplePixel } from '../engine/render';
 import { splitForTransform, type DocEngine } from '../engine/document';
 import { eraseInk, hitInk, inkBounds, makeInkStroke, transformInk } from '../engine/crispInk';
@@ -486,6 +487,12 @@ export default function CanvasView() {
     const [x, y] = toDoc(e.clientX - rect.left, e.clientY - rect.top);
     return [r2(x), r2(y), r2(pressureOf(e)), Math.round(e.tiltX || 0), Math.round(e.tiltY || 0), Math.max(0, Math.round(e.timeStamp - t0))];
   };
+  const captureTerminalSample = (it: Extract<Inter, { k: 'stroke' | 'ink' }>, e: PointerEvent) => {
+    const cv = cvRef.current;
+    if (!cv) return;
+    const sample = sampleFrom(e, it.t0, cv.getBoundingClientRect());
+    appendRecordedSample(it.s, sample, e.pointerType === 'pen' && e.pressure === 0);
+  };
 
   const commitStroke = () => {
     const it = inter.current;
@@ -507,6 +514,16 @@ export default function CanvasView() {
       }
     }
     invalidate();
+  };
+
+  const finishInterruptedStroke = (terminal?: PointerEvent) => {
+    const it = inter.current;
+    if (!it || (it.k !== 'stroke' && it.k !== 'ink')) return false;
+    if (terminal) captureTerminalSample(it, terminal);
+    inter.current = it;
+    commitStroke();
+    inter.current = null;
+    return true;
   };
 
   const abortInteraction = () => {
@@ -587,7 +604,7 @@ export default function CanvasView() {
     if (e.pointerType === 'touch') {
       touches.current.set(e.pointerId, { x: sx, y: sy });
       if (touches.current.size >= 2) {
-        abortInteraction();
+        if (!finishInterruptedStroke()) abortInteraction();
         const [a, b] = [...touches.current.values()];
         gesture.current = {
           d0: Math.hypot(b.x - a.x, b.y - a.y) || 1, a0: Math.atan2(b.y - a.y, b.x - a.x), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2,
@@ -754,10 +771,7 @@ export default function CanvasView() {
       case 'ink': {
         const evs = typeof ne.getCoalescedEvents === 'function' ? ne.getCoalescedEvents() : [];
         for (const ce of evs.length ? evs : [ne]) {
-          const smp = sampleFrom(ce, it.t0, rect);
-          const n = it.s.length;
-          if (n >= 6 && smp[5] < it.s[n - 1]) smp[5] = it.s[n - 1];
-          it.s.push(...smp);
+          appendRecordedSample(it.s, sampleFrom(ce, it.t0, rect));
         }
         if (it.k === 'stroke') it.r.feed(it.s, Infinity);
         else d.preview = { kind: 'ink', layerId: it.layerId, stroke: makeInkStroke(it.s, it.brush, it.color, it.mouse) };
@@ -902,6 +916,7 @@ export default function CanvasView() {
     }
     const it = inter.current;
     if (!d || !it) return;
+    if (it.k === 'stroke' || it.k === 'ink') captureTerminalSample(it, e.nativeEvent);
     inter.current = null;
     switch (it.k) {
       case 'stroke':
@@ -1058,7 +1073,7 @@ export default function CanvasView() {
           touches.current.delete(e.pointerId);
           if (!touches.current.size) gesture.current = null;
           activePtr.current = null;
-          abortInteraction();
+          if (!finishInterruptedStroke(e.nativeEvent)) abortInteraction();
         }}
         onPointerLeave={() => { hover.current = null; invalidate(); }}
         onWheel={onWheel}

@@ -10,11 +10,14 @@ import FloatingPalette from './components/FloatingPalette';
 import Dock, { FloatingPanels } from './components/Dock';
 import Dialogs from './components/Dialogs';
 import Welcome from './components/Welcome';
+import Home from './components/Home';
 import { useReplayLoop } from './components/ReplayPanel';
 import { EDITION } from './platform/edition';
-import WinOverlay, { useWin } from './win/WinOverlay';
+import WinOverlay, { setWin, useWin } from './win/WinOverlay';
+import { documentWorkspace } from './win/workspaceModel';
 import { BrushMarket, ComicPanel, EffectsPanel, WorkspaceBar } from './win/WinPanels';
 import Studio3D from './win/Studio3D';
+import ProjectLibrary from './win/ProjectLibrary';
 import ColorDock, { effectiveDock } from './win/ColorDock';
 import { useDock } from './win/dockModel';
 import OrbitBoard, { boardAddFiles } from './win/OrbitBoard';
@@ -38,6 +41,8 @@ function useTabletMode() {
 
 export default function App() {
   const docs = useApp((s) => s.docs);
+  const activeId = useApp((s) => s.activeId);
+  const homeScreen = useApp((s) => s.homeScreen);
   const canvasOnly = useApp((s) => s.canvasOnly);
   const layout = useApp((s) => s.layout);
   const uiScale = useApp((s) => s.settings.uiScale);
@@ -45,6 +50,14 @@ export default function App() {
   const tablet = useTabletMode();
   const workspace = useWin((s) => s.workspace);
   const dockCfg = useDock((s) => s.cfg); // Color Dock settings (Windows)
+  // A document tab owns its studio type; switching tabs never reuses a Comic/3D document as a Draw canvas.
+  useEffect(() => {
+    const doc = getApp().docs.find((item) => item.id === activeId);
+    if (!doc) return;
+    const target = documentWorkspace(doc);
+    if (target !== 'comic' && getApp().tool === 'comic') setApp({ tool: 'brush' });
+    if (useWin.getState().workspace !== target) setWin({ workspace: target });
+  }, [activeId]);
   // Windows 2.2.0: add the new panels to an existing saved layout once (collapsed); never runs on Android
   useEffect(() => {
     if (!EDITION.windows || localStorage.getItem('carbon-win-panels-220')) return;
@@ -147,7 +160,8 @@ export default function App() {
     }
   };
 
-  const showChrome = !canvasOnly;
+  const homeVisible = homeScreen || (docs.length === 0 && !(EDITION.windows && workspace === 'projects'));
+  const showChrome = !canvasOnly && !homeVisible;
   // Color Dock (Windows): only where a 2D canvas is visible; lives beside/below <main>, never over the artwork
   const showDock = EDITION.windows && showChrome && docs.length > 0 && dockCfg.enabled && (workspace === 'draw' || workspace === 'comic' || workspace === 'effects');
   const dockCol = showDock && effectiveDock(dockCfg, { w: winW, h: winH }).placement === 'bottom';
@@ -170,11 +184,11 @@ export default function App() {
         </div>
       )}
       <div className="relative flex min-h-0 flex-1">
-        {showChrome && layout.railVisible && docs.length > 0 && !(EDITION.windows && (workspace === '3d' || workspace === 'library' || workspace === 'board')) && <div className="flex" style={{ zoom }}><ToolRail tablet={tablet} /></div>}
+        {showChrome && layout.railVisible && docs.length > 0 && !(EDITION.windows && (workspace === '3d' || workspace === 'library' || workspace === 'projects' || workspace === 'board')) && <div className="flex" style={{ zoom }}><ToolRail tablet={tablet} /></div>}
         <div className={dockCol ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'flex min-h-0 min-w-0 flex-1 flex-row'}>
         {showDock && <ColorDock side="start" />}
         <main className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-          {EDITION.windows && workspace === 'library' ? <BrushMarket /> : EDITION.windows && workspace === '3d' && docs.length > 0 ? <Studio3D /> : EDITION.windows && workspace === 'board' && docs.length > 0 ? <OrbitBoard /> : docs.length > 0 ? (
+          {homeVisible ? (EDITION.windows ? <Home /> : <Welcome />) : EDITION.windows && workspace === 'projects' ? <ProjectLibrary /> : EDITION.windows && workspace === 'library' ? <BrushMarket /> : EDITION.windows && workspace === '3d' && docs.length > 0 ? <Studio3D /> : EDITION.windows && workspace === 'board' && docs.length > 0 ? <OrbitBoard /> : docs.length > 0 ? (
             <>
               <CanvasView />
               {EDITION.windows && <WinOverlay />}
@@ -185,7 +199,7 @@ export default function App() {
                 </button>
               )}
             </>
-          ) : <Welcome />}
+          ) : null}
           {canvasOnly && (
             <button onClick={() => setApp({ canvasOnly: false })} className="absolute right-3 top-3 z-30 flex items-center gap-1 rounded-full border border-white/10 bg-neutral-900/80 px-3 py-1.5 text-[11px] text-neutral-300 backdrop-blur hover:text-white" title="Exit canvas-only mode (Tab / Esc)">
               <Minimize2 size={12} /> Exit focus
@@ -200,10 +214,10 @@ export default function App() {
             {workspace === 'comic' ? <ComicPanel /> : <EffectsPanel />}
           </aside>
         )}
-        {showChrome && docs.length > 0 && !(EDITION.windows && (workspace === '3d' || workspace === 'library' || workspace === 'board')) && <div className="flex" style={{ zoom }}><Dock tablet={tablet} /></div>}
+        {showChrome && docs.length > 0 && !(EDITION.windows && (workspace === '3d' || workspace === 'library' || workspace === 'projects' || workspace === 'board')) && <div className="flex" style={{ zoom }}><Dock tablet={tablet} /></div>}
       </div>
-      {showChrome && <div style={{ zoom }}><StatusBar tablet={tablet} /></div>}
-      {showChrome && <FloatingPanels />}
+      {showChrome && !(EDITION.windows && workspace === 'projects') && docs.length > 0 && <div style={{ zoom }}><StatusBar tablet={tablet} /></div>}
+      {showChrome && !(EDITION.windows && workspace === 'projects') && <FloatingPanels />}
       <Dialogs />
       <ConfirmHost />
       <Toasts />

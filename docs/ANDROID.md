@@ -1,12 +1,12 @@
 # CARBON for Android (APK)
 
-The Android edition runs the same CARBON studio inside a native Capacitor 8 shell. It has the same engine, brushes, Crisp Ink, Drawing Replay and `.carbon` format as the desktop/web edition, plus native Android integration.
+The Android build path targets the shared Carbon studio inside a native Capacitor 8 shell and keeps its separate **CARBON 1.0.0** identity. The shared-source candidate is Carbon: Prime 7.8.7+ls for Windows/desktop; Android's own versionName/versionCode and app identity remain unchanged by that Windows-only bump. Browser-local brush storage and QR image picking/decoding have not been accepted in Android's WebView. QR import scans a user-selected image and does not request camera access; Android picker behavior remains unverified. This checkout contains the Capacitor configuration and `scripts/android.mjs`; the generated `android/` Gradle project is created by that script and is not checked in here. The Android integration, APK and physical-device behavior have **not** been tested in this audit; the table below records implemented source paths, not device acceptance.
 
 ## What is Android-specific
 
 | Area | Behaviour |
 |---|---|
-| **Saving** | Projects are written to `Documents/CARBON/<name>.carbon`. The data goes to a hidden temp file first; its size is verified, and only then is the previous file replaced. If the public Documents folder isn't writable, CARBON falls back to app storage (`Android/data/studio.carbon.app/files/CARBON`) and tells you so. |
+| **Saving** | The adapter writes projects to `Documents/CARBON/<name>.carbon` when available, otherwise app-specific storage. It stages and size-checks new bytes, keeps a rollback file for an existing project, verifies the final write, and restores the old project after a failed replacement where possible. This recovery protocol is unit-tested against a mocked filesystem; Android storage-provider behavior still needs device verification. |
 | **Opening** | The Welcome screen lists projects in the CARBON folder. *File → Open* uses the system picker, so any `.carbon` file or image works (Downloads, Drive, USB, and so on). |
 | **Exporting** | PNG/JPEG/WebP, replay videos, brush packs and palettes are saved to `CARBON/Exports`, then the Android share sheet opens (can be turned off in *Settings → Android*). |
 | **Sharing** | *File → Share Project…* sends the `.carbon` file to any app. |
@@ -20,31 +20,27 @@ The Android edition runs the same CARBON studio inside a native Capacitor 8 shel
 
 ## Build the APK
 
-### Option A: GitHub Actions (no local Android setup)
-1. Push the project to GitHub.
-2. Open **Actions → CARBON Android APK → Run workflow** (it also runs on every push to `main`).
-3. Download the `CARBON-android-…` artifact. It contains `CARBON-1.0.0-debug.apk`.
-4. For a **signed release APK**, add these repository secrets:
-   * `CARBON_KEYSTORE_BASE64`: `base64 -w0 carbon.keystore`
-   * `CARBON_KEYSTORE_PASSWORD`, `CARBON_KEY_ALIAS`, `CARBON_KEY_PASSWORD`
+### Current build path: local Android toolchain
 
-   Pushing a tag like `v1.0.0` then attaches `CARBON-1.0.0.apk` to a GitHub release.
+This checkout has **no Android GitHub Actions workflow** in `.github/workflows/`; the Windows workflow is separate. A historical v1.0.2 Android workflow/release exists upstream, but it is not this 7.x candidate or a current workflow in this source tree. Do not expect an APK artifact or release upload from Actions here.
 
-### Option B: local build
+### Local build
 Requirements: **Node 22+**, **JDK 21** (`JAVA_HOME`), **Android SDK 36** (`ANDROID_HOME`, which Android Studio Otter or newer installs).
 
 ```bash
-npm install
-node scripts/android.mjs --apk          # → release/CARBON-1.0.0-debug.apk
-node scripts/android.mjs --open         # open in Android Studio (run / profile on a device)
+npm ci
+node scripts/android.mjs --apk          # builds/syncs android/ and writes release/CARBON-1.0.0-debug.apk
+node scripts/android.mjs --open          # open the generated project in Android Studio
 ```
+
+The script requires Android SDK/JDK setup even for a local debug APK. `CARBON_VERSION_NAME` and `CARBON_VERSION_CODE` can override the Android-only `1.0.0` / `1` defaults; they do not follow the Windows 7.x+ls version.
 
 Signed release build:
 
 ```bash
 keytool -genkeypair -v -keystore carbon.keystore -alias carbon -keyalg RSA -keysize 2048 -validity 10000
-CARBON_KEYSTORE=carbon.keystore CARBON_KEYSTORE_PASSWORD=*** CARBON_KEY_ALIAS=carbon \
-  node scripts/android.mjs --release      # → release/CARBON-1.0.0.apk (zipaligned + apksigner-signed)
+CARBON_KEYSTORE=carbon.keystore CARBON_KEYSTORE_PASSWORD="$YOUR_PASSWORD" CARBON_KEY_ALIAS=carbon \
+  node scripts/android.mjs --release      # → release/CARBON-1.0.0.apk (signed only if signing tools/secrets are valid)
 ```
 
 (On Windows PowerShell: `$env:CARBON_KEYSTORE="carbon.keystore"` and so on.) Version numbers come from `CARBON_VERSION_NAME` / `CARBON_VERSION_CODE`.
@@ -61,13 +57,14 @@ CARBON_KEYSTORE=carbon.keystore CARBON_KEYSTORE_PASSWORD=*** CARBON_KEY_ALIAS=ca
 Enable *Install unknown apps* for your browser or file manager, open the APK, or use `adb install release/CARBON-1.0.0-debug.apk`.
 
 ## App identity
-* Application ID: `studio.carbon.app` (change it in `capacitor.config.json` **before** the first `cap add android`)
-* Name: CARBON. minSdk 24 (Android 7.0), targetSdk 36.
-* Icon: the CARBON mark (hexagon carbon ring + ember graphite stroke) as an adaptive icon. The splash screen shows the lockup "CARBON / Where all starts begin."
+* `capacitor.config.json` sets application ID `studio.carbon.app` and app name `CARBON` (change the ID **before** the first `cap add android`).
+* `scripts/android.mjs` defaults the Android versionName/versionCode to `1.0.0` / `1`; this identity remains separate from Carbon: Prime 7.x+ls for Windows.
+* Exact minSdk/targetSdk and the generated manifest are not checked into this checkout because `android/` is created by the build script. Inspect the generated Gradle/manifest files before a release; do not infer those values from this document.
+* The script generates launcher assets from the CARBON mark and splash SVG; verify the resulting APK on Android before claiming installation or runtime acceptance.
 
 ## Known limitations (Android)
 * Not yet verified on physical hardware in this milestone. Stylus pressure, tilt and palm rejection depend on the device's WebView and OEM pen driver.
 * On Android 11 and later, CARBON can only *list* files it created itself (scoped storage). Use *Open* for other files. Files survive uninstall only in Documents/CARBON, not in the app-storage fallback.
 * Opening `.carbon` files directly from other apps (intent filters / "Open with CARBON") is not implemented yet. Use *Open* or the CARBON folder list.
-* Replay video export uses the WebView's MediaRecorder (WebM). Some older WebViews do not support it, and CARBON shows an error in that case.
+* Replay video export uses only a WebView MediaRecorder codec it reports as supported; CARBON writes the returned WebM or MP4 type with the matching extension and does not transcode or relabel. Encoder support varies by WebView/device and remains unverified on physical Android hardware.
 * Not yet packaged as an AAB for Google Play. `./gradlew bundleRelease` in `android/` produces one, but Play signing setup is out of scope.

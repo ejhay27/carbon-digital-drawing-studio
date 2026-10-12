@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check } from 'lucide-react';
+import { Check, Home as HomeIcon } from 'lucide-react';
 import { activeDoc, getApp, PANEL_TITLES, resetLayout, setApp, setTool, togglePanel, toast, updatePalette, updateSettings, updateToolOpts, useApp, type PanelId } from '../state/store';
-import { closeDoc, duplicateDoc, importImageFile, listRecent, openRecent, pickFile, saveDoc, shareProject } from '../state/actions';
+import { closeDoc, duplicateDoc, importImageFile, listRecent, navigateHomeSafely, openRecent, pickFile, saveActiveDocument, shareProject } from '../state/actions';
 import { isNative } from '../platform/native';
 import { EDITION } from '../platform/edition';
 import { updateDock, useDock } from '../win/dockModel';
 import { WIN_PANELS } from '../state/store';
 import { addLayer, fitView, prettyCombo, rotateView, runAction } from '../state/commands';
 import { duplicateCurrent, exportBrushList, importBrushPack } from './Brushes';
-import { CarbonMark } from './Brand';
 import { uid } from '../engine/util';
 import { cn } from '../utils/cn';
 
@@ -42,15 +41,16 @@ export default function MenuBar() {
 
   const menus: Record<string, Item[]> = {
     File: [
-      { label: 'New Canvas…', action: () => runAction('file.new'), sc: sc('file.new') },
+      { label: EDITION.windows ? 'Create / New…' : 'New Canvas…', action: () => runAction('file.new'), sc: sc('file.new') },
       { label: 'Open…', action: () => runAction('file.open'), sc: sc('file.open') },
+      { label: 'My Illustrations…', action: () => setApp({ dialog: 'projects' }) },
       'sep',
       { label: 'Open Recent', header: true },
       ...(recent.length ? recent.slice(0, 8).map((r) => ({ label: '   ' + r.name, action: () => openRecent(r.key) })) : [{ label: '   (no recent documents)', disabled: true }]),
       'sep',
       { label: 'Save', action: () => runAction('file.save'), sc: sc('file.save'), disabled: noDoc },
       { label: 'Save As…', action: () => runAction('file.saveAs'), sc: sc('file.saveAs'), disabled: noDoc },
-      { label: 'Save a Copy…', action: () => d && saveDoc(d, 'copy'), disabled: noDoc },
+      { label: 'Save a Copy…', action: () => d && saveActiveDocument('copy'), disabled: noDoc },
       { label: 'Duplicate Document', action: () => d && duplicateDoc(d), disabled: noDoc },
       ...(isNative() ? [{ label: 'Share Project…', action: () => d && shareProject(d), disabled: noDoc }] : []),
       'sep',
@@ -168,6 +168,8 @@ export default function MenuBar() {
       { label: 'Record New Documents by Default', checked: s.settings.recordByDefault, action: () => updateSettings({ recordByDefault: !s.settings.recordByDefault }) },
     ],
     Help: [
+      { label: 'Command Palette…', action: () => setApp({ dialog: 'commandPalette' }), sc: sc('app.commandPalette') },
+      { label: 'Offline Quick Start…', action: () => setApp({ dialog: 'quickStart' }) },
       { label: 'Keyboard Shortcuts', action: () => setApp({ dialog: 'shortcuts' }) },
       ...(EDITION.windows ? [{ label: "Latest Patches / What's New", action: () => setApp({ dialog: 'patches' }) }] : []),
       { label: 'Run Diagnostics (acceptance tests)', action: () => setApp({ dialog: 'diagnostics' }) },
@@ -180,6 +182,9 @@ export default function MenuBar() {
 
   return (
     <div ref={ref} className="flex h-8 shrink-0 items-center gap-0.5 border-b border-black/60 bg-[#111113] px-2 text-[12px] text-neutral-300">
+      <button disabled={s.homeSaving} onClick={() => { setOpen(null); void navigateHomeSafely(); }} className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-neutral-300 hover:bg-white/5 hover:text-white disabled:opacity-50" title="Save unsaved work before returning Home">
+        <HomeIcon size={13} /> {s.homeSaving ? 'Saving…' : 'Home'}
+      </button>
       {Object.entries(menus).map(([name, items]) => (
         <div key={name} className="relative">
           <button

@@ -7,13 +7,14 @@ import { LiquifySession } from '../engine/liquify';
 import { StrokeRenderer } from '../engine/strokeRenderer';
 import { sampleRegion } from '../engine/render';
 import { hitComic, newBalloon, newFx, objBounds } from '../engine/comic';
-import { setInstalledPacks, type InstalledPack } from '../engine/brushPacks';
+import { CATALOG, setInstalledPacks, withoutInstalledPackBrush, type InstalledPack } from '../engine/brushPacks';
+import { getStoredBrushPack, removeStoredBrushPack, restoreStoredBrushPack, storeBrushPackAsset } from '../engine/assetStore';
 import { invM, mapPt, rgbToHex, uid, viewMatrix } from '../engine/util';
 import { activeDoc, currentBrush, getApp, setApp, setColor, toast, useApp } from '../state/store';
 import { canvasBus, viewChanged, zoomAt } from '../state/commands';
 import { cancelDockPick, finishDockPick, useDock } from './dockModel';
 
-export type Workspace = 'draw' | 'comic' | '3d' | 'effects' | 'library' | 'board';
+export type Workspace = 'draw' | 'comic' | '3d' | 'infinite' | 'effects' | 'library' | 'projects' | 'board';
 export type ComicMode = 'select' | 'panel-rect' | 'panel-poly' | 'panel-free' | 'balloon' | 'fx';
 
 interface WinState {
@@ -38,6 +39,8 @@ export const GRADIENT_PRESETS: { name: string; stops: GradStop[] }[] = [
   { name: 'Rainbow', stops: [{ o: 0, c: '#ff0000', a: 1 }, { o: 0.2, c: '#ffbf00', a: 1 }, { o: 0.4, c: '#33cc33', a: 1 }, { o: 0.6, c: '#00bfff', a: 1 }, { o: 0.8, c: '#4b0082', a: 1 }, { o: 1, c: '#ee82ee', a: 1 }] },
 ];
 
+let packAssetMigrationComplete = false;
+
 export const useWin = create<WinState>()(
   persist(
     (): WinState => ({
@@ -51,11 +54,95 @@ export const useWin = create<WinState>()(
     }),
     {
       name: 'carbon-win-v1',
-      partialize: (s) => ({ workspace: s.workspace === 'library' ? 'draw' : s.workspace, packs: s.packs, liq: s.liq, grad: s.grad, comic: { ...s.comic, selected: null }, libView: s.libView }),
+      partialize: (s) => ({
+        workspace: s.workspace === 'library' || s.workspace === 'projects' ? 'draw' : s.workspace,
+        // Keep legacy brush bytes until the IndexedDB migration succeeds; afterward persist metadata only.
+        packs: packAssetMigrationComplete ? s.packs.map(({ brushes: _brushes, ...pack }) => pack) : s.packs,
+        liq: s.liq, grad: s.grad, comic: { ...s.comic, selected: null }, libView: s.libView,
+      }),
+      onRehydrateStorage: () => (state, error) => {
+        if (error) {
+          console.warn('[CARBON] Brush-pack asset migration deferred; legacy local pack data is being preserved.', error);
+          return;
+        }
+        if (state) void hydrateInstalledPackAssets(Array.isArray(state.packs) ? state.packs : []);
+      },
     },
   ),
 );
 export const setWin = (p: Partial<WinState>) => useWin.setState(p);
+
+/** Remove one imported brush from its pack, rewriting the shared IndexedDB asset; bundled catalog packs are immutable. */
+export async function removeImportedBrushFromPack(brushId: string) {
+  const initial = useWin.getState();
+  const owner = initial.packs.find((pack) => pack.source !== 'catalog' && pack.brushes?.some((brush) => brush.id === brushId));
+  if (!owner) throw new Error('This imported brush is no longer installed.');
+  const reduced = withoutInstalledPackBrush(owner, brushId);
+  if (reduced) {
+    const stored = await getStoredBrushPack(owner.id);
+    await storeBrushPackAsset({
+      id: reduced.id, name: reduced.name, category: reduced.category, version: reduced.version,
+      source: reduced.source, brushes: reduced.brushes || [], downloadBytes: stored?.downloadBytes,
+    }, Infinity);
+  } else {
+    await removeStoredBrushPack(owner.id);
+  }
+
+  const latest = useWin.getState();
+  const packs = reduced
+    ? latest.packs.map((pack) => pack.id === owner.id ? reduced : pack)
+    : latest.packs.filter((pack) => pack.id !== owner.id);
+  setWin({ packs });
+
+  const app = getApp();
+  const overrides = { ...app.overrides };
+  delete overrides[brushId];
+  setApp({
+    overrides,
+    favorites: app.favorites.filter((id) => id !== brushId),
+    recentBrushes: app.recentBrushes.filter((id) => id !== brushId),
+    collections: app.collections.map((collection) => ({ ...collection, ids: collection.ids.filter((id) => id !== brushId) })),
+    brushId: app.brushId === brushId ? 'pencil-hb' : app.brushId,
+    eraserBrushId: app.eraserBrushId === brushId ? 'eraser-hard' : app.eraserBrushId,
+  });
+  return { name: owner.name, remainingBrushes: reduced?.brushes?.length || 0 };
+}
+
+async function hydrateInstalledPackAssets(packs: InstalledPack[]) {
+  let migrationSucceeded = true;
+  const hydrated = await Promise.all(packs.map(async (pack) => {
+    try {
+      let asset = await getStoredBrushPack(pack.id);
+      if (!asset && pack.source === 'catalog') {
+        const bundled = CATALOG.find((item) => item.id === pack.id);
+        if (bundled) {
+          const brushes = bundled.brushes();
+          asset = await storeBrushPackAsset({ ...bundled, source: 'catalog', brushes }, Infinity);
+          return { ...pack, brushes };
+        }
+      }
+      if (!asset && pack.brushes?.length) {
+        // One-time migration of v1 localStorage pack contents into IndexedDB.
+        asset = await storeBrushPackAsset({ ...pack, source: pack.source, brushes: pack.brushes }, Infinity);
+      }
+      if (asset) return restoreStoredBrushPack(asset);
+      return { ...pack, missing: true };
+    } catch (error) {
+      migrationSucceeded = false;
+      console.warn(`[CARBON] Could not migrate brush pack “${pack.name}”; keeping its legacy data.`, error);
+      return { ...pack, missing: !pack.brushes?.length };
+    }
+  }));
+
+  if (!migrationSucceeded) return;
+  packAssetMigrationComplete = true;
+  // Apply only to packs that still exist, so a concurrent uninstall is never undone.
+  const resolved = new Map(hydrated.map((pack) => [pack.id, pack]));
+  const current = useWin.getState().packs;
+  const next = current.map((pack) => resolved.get(pack.id) || pack);
+  setWin({ packs: next });
+}
+
 setInstalledPacks(useWin.getState().packs);
 useWin.subscribe((s, prev) => { if (s.packs !== prev.packs) { setInstalledPacks(s.packs); setApp({ tick: getApp().tick + 1 }); } });
 
