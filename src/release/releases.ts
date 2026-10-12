@@ -41,6 +41,7 @@ export const RELEASES: Release[] = [
       'My Illustrations is available on Home and from File → My Illustrations while editing; browser-local recents and Android device files remain distinct. Project cards open playback and recording controls, and replay history can be deleted separately from artwork.',
       'Replay controls explicitly start, pause, resume or stop capture without deleting history; deleting replay data is a separately confirmed action that leaves artwork intact.',
       'Native .carbon saves/copies retain editable artwork and its event replay. Artwork image export remains flattened PNG, JPEG or WebP; replay video uses a platform-supported MediaRecorder WebM or MP4 type with the matching extension.',
+      'Home uses an original generated aerial beach plate with a deterministic 14-second Canvas 2D surf loop; the boat and layout remain static. Reference screenshots/video are not embedded, and no runtime dependency was added.',
     ],
     improvements: [
       'Pointer-up and pointer-cancel paths keep the terminal position of raster and Crisp Ink strokes; pressure is not forced to zero at stylus release and sample times remain monotonic.',

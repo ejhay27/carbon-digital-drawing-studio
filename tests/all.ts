@@ -30,6 +30,7 @@ import { findProjects, recentPinId, togglePinnedId } from '../src/state/projectF
 import { firstPaletteSelection, nextPaletteSelection, searchPaletteItems } from '../src/state/commandPalette';
 import { DEFAULT_SETTINGS, DEFAULT_SHORTCUTS, allBrushes, brushById, getApp, mergeSettings, selectBrush, setApp, updateBrush } from '../src/state/store';
 import { buildQuickStartSample } from '../src/state/quickStartSample';
+import { BEACH_LOOP_SECONDS, BEACH_MAX_DPR, beachLoopPhase, beachSurge, coverTransform } from '../src/components/oceanMath';
 
 // ---------------------------------------------------------------- tiny harness
 let pass = 0;
@@ -81,6 +82,20 @@ for (let i = 0; i < RELEASES.length; i++) {
   if (i) ok(compareSemver(RELEASES[i - 1].version, r.version) > 0, 'releases are ordered newest first');
 }
 ok(RELEASES.some((r) => r.version === '2.0.0' && /3D/i.test(r.title)), '2.0.0 remains the 3D Studio major release');
+
+// ---------------------------------------------------------------- Home beach wave loop
+section('Home beach wave loop timing and image-cover alignment');
+eq(beachLoopPhase(0), 0, 'beach loop starts at phase zero');
+eq(beachLoopPhase(BEACH_LOOP_SECONDS * 1000), 0, 'loop phase resets exactly at its duration');
+eq(beachLoopPhase(23_000), beachLoopPhase(9_000), 'loop phase repeats after one complete cycle');
+ok(Math.abs(beachSurge(0, 0.37) - beachSurge(1, 0.37)) < 1e-12, 'shore run-up returns to its starting position');
+ok(Math.abs(beachSurge(0.999, 0.37) - beachSurge(0.001, 0.37)) < 0.01, 'shore movement remains continuous across the loop seam');
+ok(beachSurge(0, 0) >= 0 && beachSurge(0.5, 0) <= 1, 'run-up remains bounded between low and high tide');
+eq(BEACH_MAX_DPR, 1.25, 'home canvas caps backing-store pixel ratio for memory use');
+const wideBeachCover = coverTransform(1600, 600, 1376, 768, 0.5, 0.35);
+ok(Math.abs(wideBeachCover.scale - 1600 / 1376) < 1e-9 && Math.abs(wideBeachCover.y - ((600 - 768 * wideBeachCover.scale) * 0.35)) < 1e-9, 'wave canvas aligns with CSS object-cover on a wide hero');
+const tallBeachCover = coverTransform(1000, 800, 1376, 768);
+ok(Math.abs(tallBeachCover.scale - 800 / 768) < 1e-9 && Math.abs(tallBeachCover.x - (1000 - 1376 * tallBeachCover.scale) * 0.5) < 1e-9, 'wave canvas aligns with CSS object-cover on a taller hero');
 
 // ---------------------------------------------------------------- Drawing Replay timing, input capture & sizing
 section('Drawing Replay timing, terminal samples and conservative sizing');

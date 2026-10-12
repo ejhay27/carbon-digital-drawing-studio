@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import coastPhoto from '../../assets/home-philippine-coast.jpg?inline';
+import beachPlate from '../../assets/home-aerial-beach.jpg?inline';
+import { BEACH_LOOP_SECONDS, BEACH_MAX_DPR, beachLoopPhase, beachSurge, coverTransform } from './oceanMath';
 
 interface OceanProps {
   className?: string;
@@ -7,10 +8,66 @@ interface OceanProps {
   motion?: boolean;
 }
 
+type Point = { x: number; y: number };
+type ShoreSample = Point & { tx: number; ty: number; nx: number; ny: number; along: number };
+type Cubic = [Point, Point, Point, Point];
+
+// Normalized, image-space path along the original illustration's S-shaped waterline.
+// The water lies to the upper-left of this path; beach run-up moves in the opposite direction.
+const SHORE_CURVES: Cubic[] = [
+  [{ x: 0.805, y: -0.07 }, { x: 0.790, y: 0.10 }, { x: 0.750, y: 0.245 }, { x: 0.680, y: 0.360 }],
+  [{ x: 0.680, y: 0.360 }, { x: 0.615, y: 0.465 }, { x: 0.535, y: 0.565 }, { x: 0.445, y: 0.655 }],
+  [{ x: 0.445, y: 0.655 }, { x: 0.350, y: 0.745 }, { x: 0.225, y: 0.815 }, { x: 0.105, y: 0.855 }],
+  [{ x: 0.105, y: 0.855 }, { x: 0.000, y: 0.900 }, { x: -0.065, y: 0.965 }, { x: -0.170, y: 1.025 }],
+];
+const TAU = Math.PI * 2;
+const imageCoord = (p: Point, width: number, height: number) => ({ x: p.x * width, y: p.y * height });
+
+function makeShoreSamples(width: number, height: number): ShoreSample[] {
+  const points: Array<Point & { distance: number }> = [];
+  let distance = 0;
+  let previous: Point | null = null;
+  const steps = 64;
+  for (const normalized of SHORE_CURVES) {
+    const [p0n, p1n, p2n, p3n] = normalized;
+    const [p0, p1, p2, p3] = [p0n, p1n, p2n, p3n].map((p) => imageCoord(p, width, height));
+    for (let i = points.length ? 1 : 0; i <= steps; i++) {
+      const t = i / steps;
+      const mt = 1 - t;
+      const x = mt ** 3 * p0.x + 3 * mt ** 2 * t * p1.x + 3 * mt * t ** 2 * p2.x + t ** 3 * p3.x;
+      const y = mt ** 3 * p0.y + 3 * mt ** 2 * t * p1.y + 3 * mt * t ** 2 * p2.y + t ** 3 * p3.y;
+      if (previous) distance += Math.hypot(x - previous.x, y - previous.y);
+      points.push({ x, y, distance });
+      previous = { x, y };
+    }
+  }
+  const total = Math.max(distance, 1);
+  return points.map((p, i) => {
+    const before = points[Math.max(0, i - 1)];
+    const after = points[Math.min(points.length - 1, i + 1)];
+    const dx = after.x - before.x;
+    const dy = after.y - before.y;
+    const length = Math.max(Math.hypot(dx, dy), 1e-6);
+    const tx = dx / length;
+    const ty = dy / length;
+    return { x: p.x, y: p.y, tx, ty, nx: -ty, ny: tx, along: p.distance / total };
+  });
+}
+
+function strokeSamples(g: CanvasRenderingContext2D, points: ShoreSample[], offset: (p: ShoreSample) => number) {
+  g.beginPath();
+  points.forEach((p, i) => {
+    const d = offset(p);
+    const x = p.x - p.nx * d;
+    const y = p.y - p.ny * d;
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+  });
+  g.stroke();
+}
+
 /**
- * Offline Philippine coast hero for the Carbon: Prime home screen.
- * The locally bundled photograph supplies the lighthouse and coastline; Canvas 2D adds
- * restrained moving reflections and wavelets. No network, WebGL, or weather service is used.
+ * Original aerial beach plate with a short, deterministic Canvas 2D surf loop.
+ * It uses no video, network connection, WebGL, or additional runtime dependency.
  */
 export default function Ocean({ className = '', enabled = true, motion = true }: OceanProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -23,7 +80,7 @@ export default function Ocean({ className = '', enabled = true, motion = true }:
 
     let ctx: CanvasRenderingContext2D | null = null;
     try { ctx = canvas.getContext('2d', { alpha: true }); } catch { ctx = null; }
-    if (!ctx) return; // The locally bundled still image and CSS gradient remain visible.
+    if (!ctx) return; // The local illustration and CSS gradient remain visible.
 
     const g = ctx;
     const reduceQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -33,66 +90,93 @@ export default function Ocean({ className = '', enabled = true, motion = true }:
     let width = 1;
     let height = 1;
     let dpr = 1;
+    let fitScale = 1;
+    let offsetX = 0;
+    let offsetY = 0;
+    let shore: ShoreSample[] = [];
     let raf = 0;
+    let lastPaint = 0;
 
     const canAnimate = () => motion && !reduced;
-    const now = () => performance.now() / 1000;
-    const random = (n: number) => {
-      const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
-      return x - Math.floor(x);
-    };
+    const now = () => performance.now();
 
-    const paint = (t: number) => {
-      g.clearRect(0, 0, width, height);
-      image.style.transform = canAnimate()
-        ? `translate3d(${Math.sin(t * 0.075) * width * 0.003}px, ${Math.cos(t * 0.06) * 1.2}px, 0) scale(1.035)`
-        : 'translate3d(0, 0, 0) scale(1.035)';
+    const paint = (timestamp: number) => {
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.clearRect(0, 0, canvas.width, canvas.height);
+      if (!image.naturalWidth || !image.naturalHeight || !shore.length) return;
 
-      // The source image is framed wider on desktop; keep the shimmer on the visible sea.
-      const seaStart = height * (width / height > 2.25 ? 0.67 : 0.56);
-      const reflectionX = width * 0.43;
-      g.save();
-      g.globalCompositeOperation = 'screen';
+      g.setTransform(dpr * fitScale, 0, 0, dpr * fitScale, dpr * offsetX, dpr * offsetY);
+      const phase = beachLoopPhase(timestamp, BEACH_LOOP_SECONDS);
+      const theta = phase * TAU;
 
-      // Soft, low-contrast reflection dashes move gently toward the foreground.
-      const rows = 15;
-      for (let row = 0; row < rows; row++) {
-        const depth = row / (rows - 1);
-        const y = seaStart + Math.pow(depth, 1.35) * (height - seaStart) * 0.97;
-        const spread = width * (0.025 + depth * 0.19);
-        const dashes = 3 + Math.floor(depth * 3);
-        for (let i = 0; i < dashes; i++) {
-          const seed = row * 37 + i * 11;
-          const x = reflectionX + (random(seed) - 0.5) * spread * 2;
-          const phase = t * (0.75 + random(seed + 2) * 1.3) + random(seed + 3) * Math.PI * 2;
-          const shimmer = 0.5 + 0.5 * Math.sin(phase);
-          if (shimmer < 0.22) continue;
-          const length = 2 + random(seed + 4) * (3 + depth * 11);
-          g.strokeStyle = `rgba(238,252,247,${(0.035 + shimmer * 0.13) * (1 - depth * 0.2)})`;
-          g.lineWidth = 0.7 + depth * 1.2;
-          g.beginPath();
-          g.moveTo(x - length / 2, y + Math.sin(t + seed) * 1.2);
-          g.lineTo(x + length / 2, y + Math.sin(t + seed) * 1.2);
-          g.stroke();
-        }
+      // A narrow transparent wash runs onto the sand and then returns to the same start pose.
+      const waterEdge: Point[] = [];
+      const landEdge: Point[] = [];
+      for (const p of shore) {
+        const surge = beachSurge(phase, p.along);
+        const smallTide = Math.sin(theta + p.along * TAU * 2) * 0.9;
+        const landward = 2.5 + surge * 8.5 + smallTide;
+        waterEdge.push({ x: p.x + p.nx * 2.2, y: p.y + p.ny * 2.2 });
+        landEdge.push({ x: p.x - p.nx * landward, y: p.y - p.ny * landward });
       }
 
-      // A few long, translucent wave contours add motion without obscuring the photograph.
-      const step = Math.max(8, width / 110);
-      for (let band = 0; band < 5; band++) {
-        const depth = band / 4;
-        const baseY = seaStart + height * (0.075 + depth * 0.23);
-        const amplitude = 1.1 + depth * 2.8;
-        const wavelength = Math.max(72, width / (1.8 + depth * 1.6));
+      g.save();
+      g.globalCompositeOperation = 'screen';
+      g.beginPath();
+      waterEdge.forEach((p, i) => { if (i === 0) g.moveTo(p.x, p.y); else g.lineTo(p.x, p.y); });
+      for (let i = landEdge.length - 1; i >= 0; i--) g.lineTo(landEdge[i].x, landEdge[i].y);
+      g.closePath();
+      g.fillStyle = 'rgba(219, 246, 237, 0.12)';
+      g.fill();
+
+      // Broad feathered surf, a bright crest, then a finer broken foam edge.
+      g.lineCap = 'round';
+      g.lineJoin = 'round';
+      g.globalAlpha = 0.82;
+      g.strokeStyle = 'rgba(239, 255, 249, 0.22)';
+      g.lineWidth = 13;
+      strokeSamples(g, shore, (p) => 2.5 + beachSurge(phase, p.along) * 8.5);
+      g.globalAlpha = 0.78;
+      g.strokeStyle = 'rgba(248, 255, 251, 0.48)';
+      g.lineWidth = 4.4;
+      strokeSamples(g, shore, (p) => 2.5 + beachSurge(phase, p.along) * 8.5);
+      g.globalAlpha = 0.92;
+      g.strokeStyle = 'rgba(255, 255, 250, 0.72)';
+      g.lineWidth = 1.25;
+      strokeSamples(g, shore, (p) => 2.5 + beachSurge(phase, p.along) * 8.5 + Math.sin(theta + p.along * TAU * 2) * 0.9);
+
+      // Individual foam flecks vary along the shore but repeat exactly after one loop.
+      for (let i = 3; i < shore.length - 2; i += 5) {
+        const p = shore[i];
+        const pulse = 0.5 + 0.5 * Math.sin(theta + i * 0.31);
+        if (pulse < 0.24) continue;
+        const offset = 3 + beachSurge(phase, p.along) * 8;
+        const cx = p.x - p.nx * offset;
+        const cy = p.y - p.ny * offset;
+        const len = 2.5 + (i % 7) * 0.75;
+        const alpha = 0.12 + pulse * 0.3;
         g.beginPath();
-        for (let x = 0; x <= width + step; x += step) {
-          const y = baseY
-            + Math.sin((x / wavelength) * Math.PI * 2 + t * (0.5 + depth * 0.35) + band) * amplitude
-            + Math.sin((x / (wavelength * 0.43)) * Math.PI * 2 - t * 0.27) * amplitude * 0.22;
-          if (x === 0) g.moveTo(x, y); else g.lineTo(x, y);
-        }
-        g.strokeStyle = `rgba(222,249,244,${0.055 + depth * 0.045})`;
-        g.lineWidth = 0.7 + depth * 0.8;
+        g.moveTo(cx - p.tx * len, cy - p.ty * len);
+        g.lineTo(cx + p.tx * len, cy + p.ty * len);
+        g.strokeStyle = `rgba(255, 255, 250, ${alpha})`;
+        g.lineWidth = 0.8 + pulse * 0.8;
+        g.stroke();
+      }
+
+      // Small caustic glints drift in the shallows; all motion is periodic and seam-safe.
+      for (let i = 5; i < shore.length; i += 11) {
+        const p = shore[i];
+        const pulse = 0.5 + 0.5 * Math.sin(theta + i * 0.47 + 1.2);
+        if (pulse < 0.66) continue;
+        const offset = 20 + (i % 9) * 4.5;
+        const cx = p.x + p.nx * offset;
+        const cy = p.y + p.ny * offset;
+        const len = 2 + (i % 5) * 1.2;
+        g.beginPath();
+        g.moveTo(cx - p.tx * len, cy - p.ty * len);
+        g.lineTo(cx + p.tx * len, cy + p.ty * len);
+        g.strokeStyle = `rgba(255, 244, 194, ${(pulse - 0.62) * 0.55})`;
+        g.lineWidth = 0.9;
         g.stroke();
       }
       g.restore();
@@ -100,19 +184,29 @@ export default function Ocean({ className = '', enabled = true, motion = true }:
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
-      dpr = Math.min(1.4, window.devicePixelRatio || 1);
+      dpr = Math.min(BEACH_MAX_DPR, window.devicePixelRatio || 1);
       width = Math.max(1, rect.width);
       height = Math.max(1, rect.height);
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
-      g.setTransform(dpr, 0, 0, dpr, 0, 0);
-      paint(canAnimate() ? now() : 0);
+      const imageWidth = image.naturalWidth || 1376;
+      const imageHeight = image.naturalHeight || 768;
+      const fitted = coverTransform(width, height, imageWidth, imageHeight, 0.5, 0.35);
+      fitScale = fitted.scale;
+      offsetX = fitted.x;
+      offsetY = fitted.y;
+      shore = makeShoreSamples(imageWidth, imageHeight);
+      lastPaint = 0;
+      paint(0);
     };
 
     const frame = (timestamp: number) => {
       raf = 0;
       if (!canAnimate() || !visible || !inView) return;
-      paint(timestamp / 1000);
+      if (!lastPaint || timestamp - lastPaint >= 1000 / 30) {
+        paint(timestamp);
+        lastPaint = timestamp;
+      }
       raf = requestAnimationFrame(frame);
     };
     const stop = () => {
@@ -162,7 +256,6 @@ export default function Ocean({ className = '', enabled = true, motion = true }:
       document.removeEventListener('visibilitychange', onVisibility);
       reduceQuery.removeEventListener('change', onReducedMotion);
       image.removeEventListener('load', resize);
-      image.style.transform = 'none';
     };
   }, [enabled, motion]);
 
@@ -172,7 +265,7 @@ export default function Ocean({ className = '', enabled = true, motion = true }:
       aria-hidden="true"
       style={{
         background: enabled
-          ? 'linear-gradient(165deg, #9ccfe4 0%, #67b8ca 52%, #13536b 100%)'
+          ? 'linear-gradient(145deg, #0c4350 0%, #388b91 48%, #e7ca9a 100%)'
           : 'linear-gradient(145deg, #1b3a44 0%, #10252d 60%, #09171d 100%)',
       }}
     >
@@ -180,17 +273,17 @@ export default function Ocean({ className = '', enabled = true, motion = true }:
         <>
           <img
             ref={imageRef}
-            src={coastPhoto}
+            src={beachPlate}
             alt=""
             draggable={false}
             onError={(e) => { e.currentTarget.style.display = 'none'; }}
             className="absolute inset-0 h-full w-full select-none object-cover"
-            style={{ objectPosition: 'center 35%', transform: 'scale(1.035)', willChange: motion ? 'transform' : 'auto' }}
+            style={{ objectPosition: 'center 35%' }}
           />
           <div
             className="absolute inset-0"
             style={{
-              background: 'linear-gradient(180deg, rgba(5,20,31,.18), rgba(4,25,35,.08) 42%, rgba(5,20,28,.24)), radial-gradient(ellipse at center, rgba(4,20,28,.23) 0%, rgba(4,20,28,.06) 66%, transparent 100%)',
+              background: 'linear-gradient(180deg, rgba(5,20,31,.08), rgba(4,25,35,.02) 42%, rgba(5,20,28,.16)), radial-gradient(ellipse at center, rgba(4,20,28,.13) 0%, rgba(4,20,28,.035) 66%, transparent 100%)',
             }}
           />
           <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />

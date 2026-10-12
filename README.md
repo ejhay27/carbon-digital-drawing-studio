@@ -30,6 +30,7 @@ platform limitations.
 - **2D drawing and painting:** customizable brushes, color tools, layers, selections, shapes,
   filters and transform tools.
 - **Crisp Ink:** editable vector-like line-art strokes that can be adjusted after drawing.
+- **Aerial beach homepage (Windows/desktop):** original offline illustration with a periodic Canvas 2D surf loop; no source video, branding, or network asset is embedded. See [`docs/HOME-BEACH-ANIMATION.md`](docs/HOME-BEACH-ANIMATION.md) for asset provenance and performance limits.
 - **Drawing Replay:** record, play, seek and export a local drawing session. Real pauses are
   preserved by default; start/pause/resume/stop controls do not conflate stopping with deleting
   replay history. Native replay stays in the editable `.carbon` project.
@@ -139,7 +140,7 @@ See [`docs/ANDROID.md`](docs/ANDROID.md). The separate Android build uses JDK 21
 ## Testing and project status
 
 - `npm run typecheck` — strict TypeScript check.
-- `npm test` — Node regression suite (**319 assertions passed, 0 failed** in the 7.6.0+ls source-candidate check).
+- `npm test` — Node regression suite (**328 assertions passed, 0 failed** in the 7.6.0+ls source-candidate check).
 - **Help → Run Diagnostics** — in-app Canvas/WebGL acceptance tests; not yet run in a browser
   for this candidate.
 - Browser interaction and visual acceptance, Windows installer/runtime testing, and Android

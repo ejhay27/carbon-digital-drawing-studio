@@ -10,9 +10,9 @@
 
 ## Executive summary
 
-The requested baseline audit found substantial existing drawing, project, replay, asset, QR, Brush Lab, eraser, Home, About and 3D work in the branch. This update prioritized Drawing Replay/local recovery, then My Illustrations and export clarity, while retaining the existing asset and 3D implementation. My Illustrations is now reachable from **File → My Illustrations** while editing as well as from Home/Welcome.
+The requested baseline audit found substantial existing drawing, project, replay, asset, QR, Brush Lab, eraser, Home, About and 3D work in the branch. This update prioritized Drawing Replay/local recovery, then My Illustrations and export clarity, while retaining the existing asset and 3D implementation. My Illustrations is now reachable from **File → My Illustrations** while editing as well as from Home/Welcome. The Home layout is unchanged; its beach artwork uses a new generated plate and a deterministic 14-second Canvas 2D surf loop, not the reference screenshots or video.
 
-Current code-level verification passes **319 assertions**, TypeScript typecheck, Vite production build and `git diff --check`. There has been no manual browser interaction or acceptance of the Windows packaged runtime, Android APK/device, QR image decoding or actual MediaRecorder codecs. Do not treat the source checks as substitutes for those platform tests.
+Current code-level verification passes **328 assertions**, TypeScript typecheck, Vite production build and `git diff --check`. The wave-loop mathematics has seam and scaling tests, but no frame-by-frame visual review or 8 GB Windows hardware benchmark has been performed. There has been no manual browser interaction or acceptance of the Windows packaged runtime, Android APK/device, QR image decoding or actual MediaRecorder codecs. Do not treat the source checks as substitutes for those platform tests.
 
 No cloud upload, screen recording, cursor/menu/idle capture, camera scanning/permission, AI drawing, generative fill, AI assistant, animation timeline or Carbon: Flux integration was added. The 7.6.0 identity is a candidate label only; do not publish or announce it as a completed release.
 
@@ -69,9 +69,9 @@ No cloud upload, screen recording, cursor/menu/idle capture, camera scanning/per
 
 | Check | Result |
 |---|---|
-| `npm test` | **Pass — 319 assertions, 0 failures.** Includes replay clock/terminal samples/control lifecycle, asset validation, safe project replacement, About text, project-finder state and 3D surface geometry. |
+| `npm test` | **Pass — 328 assertions, 0 failures.** Includes replay clock/terminal samples/control lifecycle, beach-loop seam/cover alignment, asset validation, safe project replacement, About text, project-finder state and 3D surface geometry. |
 | `npm run typecheck` | **Pass — `tsc --noEmit`.** |
-| `npm run build` | **Pass — Vite 7.3.2; 2,056 modules; `dist/index.html` 2,023.79 kB (697.82 kB gzip).** |
+| `npm run build` | **Pass — Vite 7.3.2; 2,057 modules; `dist/index.html` 2,047.55 kB (714.68 kB gzip).** |
 | `git diff --check` | **Pass.** |
 | Browser UI / visual / actual pointer acceptance | **Not run.** |
 | Video encoder/codec and resulting media file | **Not run.** MediaRecorder support is platform-dependent. |
